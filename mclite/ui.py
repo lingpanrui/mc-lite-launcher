@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 import tkinter as tk
+import urllib.parse
 import webbrowser
 from tkinter import ttk, filedialog, messagebox
 
@@ -287,13 +288,13 @@ class App(tk.Tk):
     def _build_pages(self):
         self._build_home()
         self._build_java_versions()
-        self._build_content("mods", "模组下载", "来自 Modrinth · 支持 Fabric / Quilt / Forge / NeoForge",
+        self._build_content("mods", "模组下载", "联网即预取热门模组 · 双击条目查看项目页与直链 · 支持 Fabric / Quilt / Forge / NeoForge",
                             "mod", "mods",
                             "下载后放入 mods 文件夹；Fabric 版本记得同时安装 Fabric API。")
-        self._build_content("shaders", "光影下载", "来自 Modrinth · 放进 shaderpacks",
+        self._build_content("shaders", "光影下载", "联网即预取热门光影 · 双击条目查看项目页与直链",
                             "shader", "shaderpacks",
                             "光影需要 Iris（Fabric）或 OptiFine 才能加载。")
-        self._build_content("packs", "资源包", "来自 Modrinth · 放进 resourcepacks",
+        self._build_content("packs", "资源包", "联网即预取热门资源包 · 双击条目查看项目页与直链",
                             "resourcepack", "resourcepacks", "")
         self._build_bedrock_versions()
         self._build_online()
@@ -466,12 +467,15 @@ class App(tk.Tk):
         tree_wrap, tree = scrollable_tree(inner, ("名称", "作者", "下载", "简介"),
                                           (230, 110, 70, 420), height=12)
         tree_wrap.pack(fill="both", expand=True)
+        tree.bind("<Double-1>", lambda e: self.open_content_detail(key))
+        tree.bind("<Return>", lambda e: self.open_content_detail(key))
 
         foot = tk.Frame(inner, bg=BG)
         foot.pack(fill="x", pady=(10, 0))
         self.content[key] = {"ptype": ptype, "folder": folder, "tree": tree, "query": query,
                              "gv": gv, "loader": loader, "note": note, "status": None}
         button(foot, "下载所选", lambda: self.download_content(key), "primary").pack(side="left")
+        button(foot, "项目页 / 直链", lambda: self.open_content_detail(key), "ghost").pack(side="left", padx=8)
         button(foot, "打开 %s 文件夹" % folder,
                lambda: util.open_path(os.path.join(self.cfg["game_dir"], folder)), "ghost").pack(side="left", padx=8)
         st = label(foot, note, SUB, FONT_S, bg=BG)
@@ -1008,6 +1012,7 @@ class App(tk.Tk):
         os.makedirs(self.cfg["game_dir"], exist_ok=True)
         self.refresh_installed()
         self.set_status("获取版本清单…")
+        self.prefetch_content()
 
         def work():
             return mojang.get_manifest()
@@ -1024,6 +1029,7 @@ class App(tk.Tk):
             self.install_pick.set(latest)
         self.refresh_installed()
         self.detect_bedrock()
+        self.prefetch_content()
 
     def refresh_version_choices(self):
         if not self.manifest:
@@ -1399,6 +1405,7 @@ class App(tk.Tk):
 
         def done(res):
             hits, total = res
+            st["hits"] = {h["project_id"]: h for h in hits}
             for h in hits:
                 desc = (h.get("description") or "").replace("\n", " ")[:90]
                 tree.insert("", "end", iid=h["project_id"],
@@ -1411,6 +1418,144 @@ class App(tk.Tk):
             self.log("搜索失败：%s" % e)
 
         self.bg(work, done=done, err=err)
+
+    def prefetch_content(self):
+        """联网后立刻预取热门内容列表，点开页面不用等"""
+        if getattr(self, "_pref_running", False) or getattr(self, "_pref_done", False):
+            return
+        self._pref_running = True
+        targets = [("mods", "mod"), ("shaders", "shader"), ("packs", "resourcepack")]
+
+        def work():
+            out = {}
+            for key, ptype in targets:
+                try:
+                    out[key] = modrinth.search("", ptype, None, None, limit=30, sort="downloads")
+                except Exception:
+                    continue
+            return out
+
+        def done(res):
+            self._pref_running = False
+            self._pref_done = True
+            for key, (hits, total) in res.items():
+                st = self.content.get(key)
+                if not st:
+                    continue
+                st["hits"] = {h["project_id"]: h for h in hits}
+                tree = st["tree"]
+                if tree.get_children():
+                    continue
+                for h in hits:
+                    desc = (h.get("description") or "").replace("\n", " ")[:90]
+                    tree.insert("", "end", iid=h["project_id"],
+                                values=(h.get("title"), h.get("author"),
+                                        "{:,}".format(h.get("downloads", 0)), desc))
+            total = sum(v[1] for v in res.values()) if res else 0
+            self.log("已预取热门内容列表（共 %s 条候选）" % total)
+
+        self.bg(work, done=done, err=lambda e: self.log("预取内容列表失败：%s" % e))
+
+    def open_content_detail(self, key):
+        """点击条目 → 解析 Modrinth 项目页网址 + 各版本文件直链"""
+        st = self.content[key]
+        sel = st["tree"].focus()
+        if not sel:
+            messagebox.showinfo("未选择内容", "先在列表里选中一个项目。")
+            return
+        hit = (st.get("hits") or {}).get(sel) or {}
+        title = st["tree"].item(sel, "values")[0] or hit.get("title") or sel
+        ptype = st["ptype"]
+        slug = hit.get("slug") or sel
+        page = modrinth.project_url(ptype, slug)
+        gv = (st["gv"].get() or "").strip()
+        loader = ""
+        if st["loader"] is not None:
+            loader = (st["loader"].get() or "").strip().lower()
+
+        win = tk.Toplevel(self)
+        win.title("下载页 · %s" % title)
+        win.configure(bg=BG)
+        win.geometry("920x600")
+        win.transient(self)
+
+        head = card(win)
+        head.pack(fill="x", padx=14, pady=(14, 8))
+        label(head, title, TXT, FONT_B).pack(anchor="w", padx=16, pady=(12, 2))
+        label(head, "项目页：%s" % page, ACC, FONT_S).pack(anchor="w", padx=16)
+        row = tk.Frame(head, bg=CARD)
+        row.pack(fill="x", padx=16, pady=(8, 12))
+        button(row, "打开项目页", lambda: webbrowser.open(page), "primary").pack(side="left")
+        button(row, "复制项目页", lambda: self._copy(page), "ghost").pack(side="left", padx=8)
+
+        tree_wrap, vtree = scrollable_tree(win, ("版本", "游戏版本", "加载器", "文件", "直链"),
+                                           (120, 120, 90, 200, 360), height=12)
+        tree_wrap.pack(fill="both", expand=True, padx=14)
+
+        foot = tk.Frame(win, bg=BG)
+        foot.pack(fill="x", padx=14, pady=(8, 14))
+        vstat = label(foot, "正在获取版本与直链…", SUB, FONT_S, bg=BG)
+        vstat.pack(side="right", padx=8)
+        files = {}
+
+        def copy_link():
+            fid = vtree.focus()
+            if not fid or fid not in files:
+                messagebox.showinfo("未选择版本", "先在列表里选中一个版本。")
+                return
+            self._copy(files[fid])
+            vstat.configure(text="已复制直链")
+
+        def download_link():
+            fid = vtree.focus()
+            if not fid or fid not in files:
+                messagebox.showinfo("未选择版本", "先在列表里选中一个版本。")
+                return
+            folder = os.path.join(self.cfg["game_dir"], st["folder"])
+            url = files[fid]
+            name = os.path.basename(urllib.parse.urlparse(url).path) or ("%s.jar" % fid)
+
+            def work():
+                os.makedirs(folder, exist_ok=True)
+                return util.download_file(url, os.path.join(folder, name),
+                                          desc=os.path.basename(name))
+
+            def done(path):
+                self.log("已下载直链文件：%s" % path)
+                vstat.configure(text="已保存：%s" % os.path.basename(path))
+
+            self.bg(work, done=done, err=lambda e: vstat.configure(text="下载失败：%s" % e))
+
+        button(foot, "下载选中直链", download_link, "primary").pack(side="left")
+        button(foot, "复制直链", copy_link, "ghost").pack(side="left", padx=8)
+
+        def work():
+            return modrinth.get_versions(sel, gv or None, loader or None)
+
+        def done(versions):
+            if not versions:
+                vstat.configure(text="该项目没有符合当前筛选的版本")
+                return
+            for v in versions[:40]:
+                f = modrinth.primary_file(v) or {}
+                url = f.get("url") or ""
+                files[v.get("id")] = url
+                vtree.insert("", "end", iid=v.get("id"),
+                             values=(v.get("version_number"), ", ".join(v.get("game_versions") or [])[:22],
+                                     ", ".join(v.get("loaders") or [])[:16],
+                                     f.get("filename") or "", url))
+            vstat.configure(text="共 %d 个版本，双击条目可复制直链" % len(versions))
+            vtree.bind("<Double-1>", lambda e: copy_link())
+
+        self.bg(work, done=done, err=lambda e: vstat.configure(text="获取版本失败：%s" % e))
+
+    def _copy(self, text):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.log("已复制：%s" % text)
+        except Exception as e:
+            self.log("复制失败：%s" % e)
 
     def _version_loader_base(self, vid):
         """返回 (加载器, 原版基础版本)"""
