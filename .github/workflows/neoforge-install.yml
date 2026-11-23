@@ -3,6 +3,9 @@ name: neoforge-install
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   install:
     runs-on: windows-latest
