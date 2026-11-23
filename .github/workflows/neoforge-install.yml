@@ -1,0 +1,49 @@
+name: neoforge-install
+
+on:
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 安装 NeoForge 20.4.237（MC 1.20.4）
+        shell: pwsh
+        run: |
+          $game = Join-Path $env:RUNNER_TEMP "game"
+          New-Item -ItemType Directory -Force -Path $game | Out-Null
+          Set-Content -Path (Join-Path $game "launcher_profiles.json") -Value '{"profiles":{},"settings":{},"version":3}'
+          $jar = Join-Path $env:RUNNER_TEMP "neoforge-installer.jar"
+          Invoke-WebRequest -Uri "https://maven.neoforged.net/releases/net/neoforged/neoforge/20.4.237/neoforge-20.4.237-installer.jar" -OutFile $jar
+          Push-Location $game
+          java -jar $jar --installClient $game
+          Pop-Location
+          Get-ChildItem (Join-Path $game "versions") | Select-Object Name
+
+      - name: 打包安装结果
+        shell: pwsh
+        run: |
+          $game = Join-Path $env:RUNNER_TEMP "game"
+          $out = Join-Path $env:RUNNER_TEMP "neo-out"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item -Path (Join-Path $game "versions\neoforge-20.4.237") -Destination (Join-Path $out "versions\neoforge-20.4.237") -Recurse
+          foreach ($sub in @("libraries\net\neoforged", "libraries\cpw", "libraries\net\minecraft\client", "libraries\net\minecraft\server", "libraries\net\minecraftforge", "libraries\net\md-5", "libraries\org\ow2")) {
+            $src = Join-Path $game $sub
+            if (Test-Path $src) {
+              $dst = Join-Path $out $sub
+              New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+              Copy-Item -Path $src -Destination $dst -Recurse
+            }
+          }
+          Compress-Archive -Path (Join-Path $out "*") -DestinationPath (Join-Path $env:RUNNER_TEMP "neoforge-20.4.237.zip") -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neoforge-20.4.237-installed
+          path: ${{ runner.temp }}/neoforge-20.4.237.zip
+          if-no-files-found: error
