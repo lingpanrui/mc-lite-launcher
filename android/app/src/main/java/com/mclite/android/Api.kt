@@ -106,10 +106,10 @@ object Api {
         val projectType: String,
     )
 
-    fun searchMods(query: String, projectType: String, limit: Int = 25): List<ModHit> {
+    fun searchMods(query: String, projectType: String, limit: Int = 25, index: String = "relevance"): List<ModHit> {
         val q = URLEncoder.encode(query, "UTF-8")
         val facets = URLEncoder.encode("[[\"project_type:$projectType\"]]", "UTF-8")
-        val url = "$MODRINTH/search?query=$q&limit=$limit&facets=$facets&index=relevance"
+        val url = "$MODRINTH/search?query=$q&limit=$limit&facets=$facets&index=$index"
         val root = JSONObject(httpText(url))
         val hits = root.optJSONArray("hits") ?: JSONArray()
         val out = ArrayList<ModHit>()
@@ -138,6 +138,56 @@ object Api {
             else -> "project"
         }
         return "https://modrinth.com/$kind/${hit.slug}"
+    }
+
+    // -------------------- 项目版本 / 真实下载直链 --------------------------- //
+
+    data class ModFile(
+        val name: String,
+        val url: String,
+        val size: Long,
+        val primary: Boolean,
+    )
+
+    data class ModVersion(
+        val versionNumber: String,
+        val gameVersions: List<String>,
+        val loaders: List<String>,
+        val files: List<ModFile>,
+    )
+
+    /** 拉取某个 Modrinth 项目的版本列表，里面的 files[].url 就是可直接下载的直链 */
+    fun projectVersions(projectId: String, limit: Int = 6): List<ModVersion> {
+        val url = "$MODRINTH/project/$projectId/version"
+        val arr = JSONArray(httpText(url))
+        val out = ArrayList<ModVersion>()
+        for (i in 0 until minOf(arr.length(), limit)) {
+            val o = arr.getJSONObject(i)
+            val gv = o.optJSONArray("game_versions") ?: JSONArray()
+            val ld = o.optJSONArray("loaders") ?: JSONArray()
+            val files = o.optJSONArray("files") ?: JSONArray()
+            val fileList = ArrayList<ModFile>()
+            for (j in 0 until files.length()) {
+                val f = files.getJSONObject(j)
+                fileList.add(
+                    ModFile(
+                        name = f.optString("filename"),
+                        url = f.optString("url"),
+                        size = f.optLong("size"),
+                        primary = f.optBoolean("primary"),
+                    )
+                )
+            }
+            out.add(
+                ModVersion(
+                    versionNumber = o.optString("version_number").ifEmpty { o.optString("name") },
+                    gameVersions = (0 until gv.length()).map { gv.optString(it) },
+                    loaders = (0 until ld.length()).map { ld.optString(it) },
+                    files = fileList,
+                )
+            )
+        }
+        return out
     }
 
     // --------------------------- Java 服务器状态 ---------------------------- //
