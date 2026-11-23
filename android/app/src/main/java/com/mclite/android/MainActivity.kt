@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -205,6 +206,12 @@ private fun EmptyHint(text: String) {
 
 private data class TabItem(val label: String, val icon: ImageVector)
 
+/** 应用一启动就在后台预取的缓存：用户点进模组页时立刻有数据 */
+private object Cache {
+    var mods: List<Api.ModHit>? = null
+    val versions = HashMap<String, List<Api.ModVersion>>()
+}
+
 private val Tabs = listOf(
     TabItem("首页", Icons.Filled.Home),
     TabItem("Java", Icons.Filled.Memory),
@@ -268,6 +275,8 @@ private fun HomeScreen(onNavigate: (Int) -> Unit) {
             runCatching { Api.mojangManifest() }
                 .onSuccess { manifest = it }
                 .onFailure { error = it.message }
+            // 一联网就先把模组首页抓下来，点进“模组”页立刻有数据
+            Cache.mods = runCatching { Api.searchMods("", "mod", 25, "downloads") }.getOrNull()
         }
     }
 
@@ -543,18 +552,34 @@ private fun ContentScreen() {
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var searched by remember { mutableStateOf(false) }
+    var detail by remember { mutableStateOf<Api.ModHit?>(null) }
 
-    fun doSearch() {
+    fun doSearch(q: String = query, idx: String = "relevance") {
         loading = true
         error = null
         searched = true
         scope.launch {
             withContext(Dispatchers.IO) {
-                runCatching { Api.searchMods(query.ifBlank { "sodium" }, kind) }
-                    .onSuccess { hits = it }
+                runCatching { Api.searchMods(q, kind, 25, idx) }
+                    .onSuccess {
+                        hits = it
+                        if (q.isEmpty()) Cache.mods = it
+                    }
                     .onFailure { error = it.message; hits = emptyList() }
             }
             loading = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (hits.isEmpty()) {
+            val cached = Cache.mods
+            if (cached != null) {
+                hits = cached
+                searched = true
+            } else {
+                doSearch("", "downloads")
+            }
         }
     }
 
@@ -595,6 +620,7 @@ private fun ContentScreen() {
                     Column(
                         Modifier
                             .fillMaxWidth()
+                            .clickable { detail = hit }
                             .padding(vertical = 10.dp)
                     ) {
                         Text(hit.title, color = TextColor, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -606,13 +632,103 @@ private fun ContentScreen() {
                         )
                         Spacer(Modifier.height(4.dp))
                         Text("下载 ${hit.downloads}", color = SubColor, fontSize = 11.sp)
-                        TextButton(onClick = { openUrl(ctx, Api.modrinthUrl(hit)) }) { Text("打开项目页") }
+                        Text(
+                            Api.modrinthUrl(hit),
+                            color = Accent, fontSize = 10.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(onClick = { detail = hit }) { Text("解析下载直链", fontSize = 12.sp) }
+                            TextButton(onClick = { openUrl(ctx, Api.modrinthUrl(hit)) }) {
+                                Text("打开项目页", fontSize = 12.sp)
+                            }
+                        }
                     }
                     HorizontalDivider(color = Color(0xFF232935))
                 }
             }
         }
     }
+
+    val pick = detail
+    if (pick != null) {
+        ModDetailDialog(pick) { detail = null }
+    }
+}
+
+@Composable
+private fun ModDetailDialog(hit: Api.ModHit, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val cache = Cache.versions[hit.id]
+    var versions by remember { mutableStateOf(cache ?: emptyList()) }
+    var loading by remember { mutableStateOf(cache == null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(hit.id) {
+        if (versions.isNotEmpty()) {
+            loading = false
+            return@LaunchedEffect
+        }
+        withContext(Dispatchers.IO) {
+            runCatching { Api.projectVersions(hit.id, 5) }
+                .onSuccess {
+                    versions = it
+                    Cache.versions[hit.id] = it
+                }
+                .onFailure { error = it.message }
+        }
+        loading = false
+    }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(hit.title, fontSize = 16.sp) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(Api.modrinthUrl(hit), color = Accent, fontSize = 11.sp)
+                Spacer(Modifier.height(8.dp))
+                when {
+                    loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(color = Accent, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("正在解析下载地址…", color = SubColor, fontSize = 12.sp)
+                    }
+                    error != null -> Text("解析失败：$error", color = SubColor, fontSize = 12.sp)
+                    versions.isEmpty() -> Text("这个项目还没有可下载的文件", color = SubColor, fontSize = 12.sp)
+                    else -> versions.forEach { v ->
+                        val file = v.files.firstOrNull { it.primary } ?: v.files.firstOrNull()
+                        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                            Text(v.versionNumber, color = TextColor, fontSize = 13.sp)
+                            Text(
+                                "${v.gameVersions.take(3).joinToString(" / ")} · ${v.loaders.joinToString("/")}",
+                                color = SubColor, fontSize = 10.sp,
+                            )
+                            if (file != null) {
+                                Text(
+                                    "${file.name} · ${(file.size / 1024 / 1024)} MB",
+                                    color = SubColor, fontSize = 10.sp,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    TextButton(onClick = { copyText(ctx, file.url, "下载直链") }) {
+                                        Text("复制直链", fontSize = 11.sp)
+                                    }
+                                    TextButton(onClick = { openUrl(ctx, file.url) }) {
+                                        Text("下载", fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                        HorizontalDivider(color = Color(0xFF232935))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { copyText(ctx, Api.modrinthUrl(hit), "项目页") }) { Text("复制项目页") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
 }
 
 // --------------------------------------------------------------------------- //
