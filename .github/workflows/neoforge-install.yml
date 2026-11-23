@@ -47,3 +47,11 @@ jobs:
           name: neoforge-20.4.237-installed
           path: ${{ runner.temp }}/neoforge-20.4.237.zip
           if-no-files-found: error
+
+      - name: 发布到 Release（方便国内通过加速通道下载）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: neoforge-20.4.237-installed
+          name: NeoForge 20.4.237 已安装包（MC 1.20.4）
+          body: 由 GitHub Actions 在海外网络完整安装后打包，含 libraries 与 versions/neoforge-20.4.237。
+          files: ${{ runner.temp }}/neoforge-20.4.237.zip
