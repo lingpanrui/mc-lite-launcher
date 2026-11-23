@@ -35,6 +35,11 @@
 
 ### 内容下载
 - 模组 / 光影 / 资源包，数据来自 [Modrinth](https://modrinth.com)
+- **联网即预取**：启动器一拿到版本清单，后台就抓取热门模组 / 光影 / 资源包列表，
+  打开「模组下载」页直接看到内容，不用先等搜索
+- **点击条目自动解析下载页**：双击任意条目（或点「项目页 / 直链」）即弹出详情窗，
+  显示该项目的真实项目页网址、每个版本的文件名与**直链**，可一键复制直链、
+  复制项目页、或直接按直链下载
 - 按游戏版本 + 加载器筛选，自动补齐 required 前置（如 Fabric API）
 - 光影前置一键装：Fabric→Iris+Sodium，Forge→Oculus+Embeddium，NeoForge→Iris
 - 自动放入 `mods` / `shaderpacks` / `resourcepacks`
@@ -62,9 +67,10 @@
 
 ## 已知限制（诚实版）
 
-- **NeoForge** 支持已接入，但官方 maven（`maven.neoforged.net`）在部分国内网络下被污染：
-  版本列表可能读不到（可手动填版本号，如 `21.1.133`），安装器下载依赖也可能卡住。
-  这是网络问题不是启动器问题；Forge / Fabric 不受影响。
+- **NeoForge** 官方 maven（`maven.neoforged.net`）在部分国内网络下被污染，启动器内直接装
+  可能卡在依赖下载。仓库提供 Actions 工作流在海外网络完整安装后打包发布
+  （Releases 里的 `neoforge-20.4.237-installed`），解压到 `game` 目录即可使用；
+  本机实测 Forge `1.20.1-forge-47.4.29` 与 NeoForge `neoforge-20.4.237` 均可进入游戏。
 - **基岩版客户端** 由 Microsoft Store 分发，启动器不绕过商店，只检测并启动
   本机已安装版本；免安装下载针对的是**服务端**（BDS）。
 - **微软正版登录** 需要自备 Azure Client ID（免费注册，但属于额外步骤）；
@@ -114,6 +120,9 @@ mclite/util.py       配置、HTTP、校验、解压
 定位与桌面版不同：安卓上要真的跑 Java 版需要 ARM JVM 与 GL 转译（那是
 PojavLauncher 级别的工程），所以安卓端做的是**配套管理端**——版本/模组/光影浏览、
 服务端状态、联机地址管理，并可拉起已安装的 PojavLauncher 或基岩版。
+安卓端同样**联网即预取热门模组**，每条结果直接显示真实项目页网址，
+点「解析下载直链」可拿到每个版本文件的真实 CDN 链接。
+已在 Android 11（x86_64 官方模拟器，Google APIs）实测启动与预取正常。
 详见 [android/README.md](android/README.md)。
 
 ## License
