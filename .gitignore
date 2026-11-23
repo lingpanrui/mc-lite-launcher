@@ -1,0 +1,33 @@
+# 构建产物
+/build/
+/dist/
+*.spec.bak
+
+# 缓存 / 日志
+__pycache__/
+*.pyc
+_build.log
+*.log
+cache/
+
+# 临时自检脚本产物
+_check_*.py
+_forge_test.py
+*.part
+
+# 安卓
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+*.apk
+*.aab
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+
+# PyInstaller 自动生成
+MCLite.spec
+
