@@ -424,6 +424,7 @@ def build_command(game_dir, version_id, java_exe, username, memory_mb, width=854
     os.makedirs(natives_dir, exist_ok=True)
 
     cp = []
+    seen = set()
     missing = 0
     for lib in vj.get("libraries") or []:
         if not rules_allow(lib.get("rules")):
@@ -435,13 +436,21 @@ def build_command(game_dir, version_id, java_exe, username, memory_mb, width=854
         if not rel:
             continue
         p = os.path.join(libs_dir, rel.replace("/", os.sep))
+        key = os.path.normcase(os.path.abspath(p))
         if os.path.isfile(p):
-            cp.append(p)
+            if key not in seen:
+                seen.add(key)
+                cp.append(p)
         else:
             missing += 1
+    main_class = vj.get("mainClass") or "net.minecraft.client.main.Main"
+    needs_vanilla = not ("bootstraplauncher" in main_class.lower() or "modlauncher" in main_class.lower())
     jar = os.path.join(game_dir, "versions", root_id, root_id + ".jar")
-    if os.path.isfile(jar):
-        cp.append(jar)
+    if needs_vanilla and os.path.isfile(jar):
+        key = os.path.normcase(os.path.abspath(jar))
+        if key not in seen:
+            seen.add(key)
+            cp.append(jar)
 
     asset_index = (vj.get("assetIndex") or {}).get("id") or vj.get("assets") or "legacy"
     params = {
@@ -507,9 +516,26 @@ def build_command(game_dir, version_id, java_exe, username, memory_mb, width=854
     return cmd, vj, root_id, missing
 
 
+def _write_argfile(path, args):
+    """把启动参数写入 Java @argfile，避免 Windows 32767 字符命令行上限"""
+    lines = []
+    for a in args:
+        a = a.replace("\\", "/")
+        if any(c in a for c in ' \t;'):
+            a = '"' + a.replace('"', "") + '"'
+        lines.append(a)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return path
+
+
 def launch(cmd, game_dir, on_output=None):
     """启动游戏进程，返回 Popen"""
     os.makedirs(game_dir, exist_ok=True)
+    total = sum(len(str(a)) + 3 for a in cmd)
+    if total > 20000:
+        argfile = _write_argfile(os.path.join(game_dir, ".mclite-args.txt"), cmd[1:])
+        cmd = [cmd[0], "@" + argfile]
     flags = 0x08000000 if os_name() == "windows" else 0  # CREATE_NO_WINDOW
     proc = subprocess.Popen(
         cmd,
