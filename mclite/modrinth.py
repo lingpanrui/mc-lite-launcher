@@ -16,6 +16,21 @@ PROJECT_TYPES = {
     "datapack": "数据包",
 }
 
+# Modrinth 项目页 URL 前缀
+_TYPE_SEGMENT = {
+    "mod": "mod",
+    "shader": "shader",
+    "resourcepack": "resourcepack",
+    "modpack": "modpack",
+    "datapack": "datapack",
+}
+
+
+def project_url(project_type, slug):
+    """根据 slug 拼出 Modrinth 项目页网址"""
+    seg = _TYPE_SEGMENT.get(project_type or "mod", "mod")
+    return "https://modrinth.com/%s/%s" % (seg, slug)
+
 LOADERS = ["fabric", "quilt", "forge", "neoforge"]
 
 
