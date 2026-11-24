@@ -112,6 +112,8 @@ keystore 不进仓库，只存放在 GitHub Actions Secrets（`KEYSTORE_BASE64` 
 
 > 本机信任自签名证书（只影响你这台机器，导入后 UAC 不再提示"未知发布者"）：
 >
+> 在 Release 里下载 `trust-mclite-cert.bat`，与 `.cer`、`.exe` 放在同一目录，双击即可完成下面两条命令。
+>
 > ```powershell
 > certutil -user -addstore -f Root .\MCLite-selfsigned.cer
 > certutil -user -addstore -f TrustedPublisher .\MCLite-selfsigned.cer
@@ -123,6 +125,13 @@ keystore 不进仓库，只存放在 GitHub Actions Secrets（`KEYSTORE_BASE64` 
 > certutil -user -delstore Root A382880EE6D964E45D8410303303C373415060B3
 > certutil -user -delstore TrustedPublisher A382880EE6D964E45D8410303303C373415060B3
 > ```
+
+> [!WARNING]
+> **先校验，再运行。** 下载别人编译的 exe 前，请用 `SHA256SUMS.txt` 里的值核对
+> `Get-FileHash .\MCLite.exe -Algorithm SHA256`。哈希对不上说明文件被改动过（被篡改、
+> 被二次打包、或下载被中间人替换），**不要运行**。本项目的任何官方构建都只从
+> [Releases](../../releases) 和本仓库的 GitHub Actions 产出，不通过网盘、群文件、第三方站点分发。
+
 
 ```
 # 2026-11-24 构建（exe 已自签名）
