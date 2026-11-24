@@ -193,7 +193,7 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --name MCLite --v
 
 ## 发布流程（维护者）
 
-`发布版本.ps1` 把「改版本号 → 打包 → 校验版本资源 → 签名 → 算哈希 → 上传 Release」串成一条链，
+`发布版本.ps1`（维护者本地脚本，不入公开仓库）把「改版本号 → 打包 → 校验版本资源 → 签名 → 算哈希 → 上传 Release」串成一条链，
 每步都校验结果，任何一步失败立即停止：
 
 ```powershell
