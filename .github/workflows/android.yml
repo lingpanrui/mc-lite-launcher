@@ -39,7 +39,7 @@ jobs:
 
       - name: 构建 release APK（固定签名，可覆盖升级）
         env:
-          MCLITE_KEYSTORE: android/keystore.jks
+          MCLITE_KEYSTORE: ${{ github.workspace }}/android/keystore.jks
           MCLITE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           MCLITE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           MCLITE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -48,6 +48,7 @@ jobs:
       - name: 校验证书指纹
         run: |
           APK=android/app/build/outputs/apk/release/app-release.apk
+          test -f "$APK" || { echo "::error::没有产出已签名的 app-release.apk"; exit 1; }
           "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$APK" | head -n 6
           echo "sha256: $(sha256sum "$APK" | cut -d' ' -f1)"
 
