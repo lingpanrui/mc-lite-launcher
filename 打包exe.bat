@@ -4,7 +4,7 @@ echo Installing PyInstaller if needed...
 python -m pip install --upgrade pyinstaller
 if errorlevel 1 goto :err
 echo Building MCLite.exe ...
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name MCLite main.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name MCLite --version-file version_info.txt main.py
 if errorlevel 1 goto :err
 echo.
 echo Done: dist\MCLite.exe
