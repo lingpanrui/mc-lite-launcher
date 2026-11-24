@@ -134,10 +134,34 @@ keystore 不进仓库，只存放在 GitHub Actions Secrets（`KEYSTORE_BASE64` 
 
 
 ```
-# 2026-11-24 构建（exe 已自签名）
-MCLite.exe         a505ae8c184f31e59e5c28a1ab4bcc36cc767805d4b0c88f0483f6e6c6ae3fa5
+# 2026-11-25 构建（exe 已自签名，版本资源已写入版权信息）
+MCLite.exe         e1fd35698f2446b185dcd8a0fa5dc4bd8c6de01da5a49d444cc93cf3e8ab8900
 MCLite-android.apk 970174778fb35d9968c3bffabf481b30d3cc78f155ce8eeed06fc81c37fee875
 ```
+
+## 版权与版本信息
+
+本项目采用 **MIT License**，著作权人为 `lingpanrui`（见 [LICENSE](LICENSE)）。
+`MCLite.exe` 的版本资源（文件属性 → 详细信息）中写入了下列字段，随签名一起受完整性保护：
+
+| 字段 | 值 |
+| --- | --- |
+| CompanyName | MCLite 项目 |
+| FileDescription | MC Lite 启动器 |
+| ProductName / ProductVersion | MC Lite / 1.1.0.0 |
+| LegalCopyright | Copyright © 2026 lingpanrui，MIT License |
+| Comments | Java 版 + 基岩版 · 模组光影 · 免注册联机 · 仓库地址 |
+
+> 说明：`LegalCopyright` 是文件内的纯文本声明，作用是署名与告知；伪造它不需要任何密钥。
+> 真正无法伪造的是**数字签名**——改一个字节签名即失效，所以本项目两个都做了。
+
+从源码构建时用 `--version-file version_info.txt` 写入上述字段：
+
+```powershell
+python -m PyInstaller --noconfirm --clean --onefile --windowed `
+  --name MCLite --version-file version_info.txt main.py
+```
+
 
 校验方法：
 
@@ -163,7 +187,7 @@ Get-FileHash .\MCLite.exe -Algorithm SHA256
 
 ```powershell
 python -m pip install pyinstaller
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name MCLite main.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name MCLite --version-file version_info.txt main.py
 # 产物：dist\MCLite.exe
 ```
 
