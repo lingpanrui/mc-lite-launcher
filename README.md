@@ -79,13 +79,22 @@ SHA-256 指纹 `c03b83acde011eb8fe85bf77bf6936a4d074b0aaf2d0c9a3c50b918fea55c6eb
 keystore 不进仓库，只存放在 GitHub Actions Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` /
 `KEY_ALIAS` / `KEY_PASSWORD`），构建时临时还原、用完即弃。
 
-**Windows exe 目前没有 Authenticode 代码签名**（受信任的商业证书需要付费；
-开源项目可以申请 SignPath Foundation 的免费赞助签名，审核通过后可在 CI 里自动签名）。
+**Windows exe 使用自签名代码签名证书**（`CN=MCLite Self-Signed, O=MCLite, C=CN`，
+证书指纹 SHA-1 `A382880EE6D964E45D8410303303C373415060B3`），有效期 5 年。
+它能让文件属性里显示签名者、并能检测篡改，但因为根证书不被公共信任库收录，
+**别人的电脑上仍会显示"未知发布者"**，除非把随包的 `MCLite-selfsigned.cer` 导入到
+"受信任的根证书颁发机构"。这不是缺陷，而是没有付费商业证书时的客观限制。
+
+如果以后要让普通用户下载后不弹警告，只能走两条路：购买商业 OV/EV 代码签名证书，
+或申请 [SignPath Foundation](https://signpath.org/) 的开源项目赞助签名
+（需要项目审核，通过后可在 GitHub Actions 里自动签名，本项目已满足"公开仓库 + MIT 许可证 +
+公开 CI 构建"的基础条件）。
+
 下载后请用 SHA256 核对（以随包附带的 `SHA256SUMS.txt` 为准，本仓库不存放二进制）：
 
 ```
-# 2026-11-24 构建
-MCLite.exe         2bebc5bd512d954e3c42c42f819b6dcf31a8830d3646dbefc9c757721f4e89b8
+# 2026-11-24 构建（exe 已自签名）
+MCLite.exe         a505ae8c184f31e59e5c28a1ab4bcc36cc767805d4b0c88f0483f6e6c6ae3fa5
 MCLite-android.apk 970174778fb35d9968c3bffabf481b30d3cc78f155ce8eeed06fc81c37fee875
 ```
 
