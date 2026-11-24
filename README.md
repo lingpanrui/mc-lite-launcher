@@ -92,6 +92,20 @@ keystore 不进仓库，只存放在 GitHub Actions Secrets（`KEYSTORE_BASE64` 
 
 下载后请用 SHA256 核对（以随包附带的 `SHA256SUMS.txt` 为准，本仓库不存放二进制）：
 
+> 本机信任自签名证书（只影响你这台机器，导入后 UAC 不再提示"未知发布者"）：
+>
+> ```powershell
+> certutil -user -addstore -f Root .\MCLite-selfsigned.cer
+> certutil -user -addstore -f TrustedPublisher .\MCLite-selfsigned.cer
+> ```
+>
+> 撤销信任：
+>
+> ```powershell
+> certutil -user -delstore Root A382880EE6D964E45D8410303303C373415060B3
+> certutil -user -delstore TrustedPublisher A382880EE6D964E45D8410303303C373415060B3
+> ```
+
 ```
 # 2026-11-24 构建（exe 已自签名）
 MCLite.exe         a505ae8c184f31e59e5c28a1ab4bcc36cc767805d4b0c88f0483f6e6c6ae3fa5
