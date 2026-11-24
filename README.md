@@ -9,8 +9,26 @@
 
 ## 下载
 
-- 到 [Releases](../../releases) 下载 `MCLite.exe`，双击即用，绿色免安装。
-- 想从源码跑：`启动.bat`（需要 Python 3.10+，仅标准库）。
+到 [Releases](../../releases/latest) 下载，Android 版装 `MCLite-android.apk`。
+
+### Windows 版（三步）
+
+1. 把 `MCLite.exe`、`MCLite-selfsigned.cer`、`trust-mclite-cert.bat` 解压到**同一个目录**
+2. 双击 `trust-mclite-cert.bat`（当前用户级别，不需要管理员），把发布者证书装进本机
+3. 双击 `MCLite.exe` 运行，绿色免安装，不写注册表，数据都在 `%APPDATA%\MCLite`
+
+> 不想导入证书也能跑，只是首次启动会提示"未知发布者"，点「更多信息 → 仍要运行」即可。
+> 撤销信任：`certutil -user -delstore Root A382880EE6D964E45D8410303303C373415060B3` 和
+> `certutil -user -delstore TrustedPublisher A382880EE6D964E45D8410303303C373415060B3`。
+
+### Android 版
+
+直接安装 APK 即可（`versionName 1.1.0` / `versionCode 2`）；签名指纹固定为
+`c03b83acde011eb8fe85bf77bf6936a4d074b0aaf2d0c9a3c50b918fea55c6eb`，之后版本可直接覆盖升级。
+
+### 从源码跑
+
+`启动.bat`（需要 Python 3.10+，仅标准库）。
 
 ## 功能
 
