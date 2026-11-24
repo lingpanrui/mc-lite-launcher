@@ -71,6 +71,30 @@
    └─ servers\<版本>\   # 各版本基岩版服务端
 ```
 
+## 签名与校验
+
+**安卓 APK 用固定 release keystore 自签名**，证书主体 `CN=MCLite, O=MCLite, C=CN`，
+SHA-256 指纹 `c03b83acde011eb8fe85bf77bf6936a4d074b0aaf2d0c9a3c50b918fea55c6eb`。
+同一把 key 一直沿用，所以后续版本可以直接覆盖安装、无需卸载。
+keystore 不进仓库，只存放在 GitHub Actions Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` /
+`KEY_ALIAS` / `KEY_PASSWORD`），构建时临时还原、用完即弃。
+
+**Windows exe 目前没有 Authenticode 代码签名**（受信任的商业证书需要付费；
+开源项目可以申请 SignPath Foundation 的免费赞助签名，审核通过后可在 CI 里自动签名）。
+下载后请用 SHA256 核对（以随包附带的 `SHA256SUMS.txt` 为准，本仓库不存放二进制）：
+
+```
+# 2026-11-24 构建
+MCLite.exe         2bebc5bd512d954e3c42c42f819b6dcf31a8830d3646dbefc9c757721f4e89b8
+MCLite-android.apk 970174778fb35d9968c3bffabf481b30d3cc78f155ce8eeed06fc81c37fee875
+```
+
+校验方法：
+
+```powershell
+Get-FileHash .\MCLite.exe -Algorithm SHA256
+```
+
 ## 已知限制（诚实版）
 
 - **NeoForge** 官方 maven（`maven.neoforged.net`）在部分国内网络下被污染，启动器内直接装
