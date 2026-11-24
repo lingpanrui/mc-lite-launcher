@@ -20,8 +20,12 @@ android/.gradle/
 android/local.properties
 android/app/build/
 android/build/
+android/keystore.jks
 *.apk
 *.aab
+
+# 签名材料（绝不提交）
+.signing/
 
 # 编辑器
 .vscode/
