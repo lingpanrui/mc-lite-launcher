@@ -191,6 +191,29 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --name MCLite --v
 # 产物：dist\MCLite.exe
 ```
 
+## 发布流程（维护者）
+
+`发布版本.ps1` 把「改版本号 → 打包 → 校验版本资源 → 签名 → 算哈希 → 上传 Release」串成一条链，
+每步都校验结果，任何一步失败立即停止：
+
+```powershell
+# 日常发版
+.\发布版本.ps1 -Version 1.2.0
+
+# 只打印将要做什么，不改任何文件
+.\发布版本.ps1 -Version 1.2.0 -DryRun
+
+# exe 已打好/已签好，只重算哈希并替换 Release 资产
+.\发布版本.ps1 -SkipBuild -SkipSign -Tag v1.1.0
+
+# 本地验证，不碰远端
+.\发布版本.ps1 -Version 1.2.0 -SkipUpload
+```
+
+签名用的证书指纹写在脚本参数 `-Thumbprint` 里（默认 `A382880E...60B3`），换机器时先导入
+`.signing\codesign-selfsigned.pfx`，脚本会自动在证书库里找。
+
+
 自检（检查各接口连通性，`--install` 会真实装一个版本）：
 
 ```powershell
