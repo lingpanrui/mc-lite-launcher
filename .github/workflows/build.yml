@@ -23,7 +23,7 @@ jobs:
         run: python -m pip install --upgrade pip pyinstaller
 
       - name: 打包单文件 exe
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name MCLite main.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name MCLite --version-file version_info.txt main.py
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
