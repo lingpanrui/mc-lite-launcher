@@ -11,14 +11,33 @@ android {
         applicationId = "com.mclite.android"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
+    }
+
+    // 固定 release 签名：CI 里由 secrets 解码 keystore 并注入这几个环境变量，
+    // 本地构建时也可以手动设置同样的环境变量，保证跨版本签名一致、可覆盖升级。
+    val ksPath = System.getenv("MCLITE_KEYSTORE") ?: ""
+    signingConfigs {
+        if (ksPath.isNotEmpty() && file(ksPath).exists()) {
+            create("release") {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("MCLITE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("MCLITE_KEY_ALIAS")
+                keyPassword = System.getenv("MCLITE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
+        }
+        debug {
+            // 有固定 keystore 时，debug 包也用同一把 key，避免出现"签名不一致"的包
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
