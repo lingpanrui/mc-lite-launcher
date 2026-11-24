@@ -17,11 +17,17 @@ android {
 
     // 固定 release 签名：CI 里由 secrets 解码 keystore 并注入这几个环境变量，
     // 本地构建时也可以手动设置同样的环境变量，保证跨版本签名一致、可覆盖升级。
-    val ksPath = System.getenv("MCLITE_KEYSTORE") ?: ""
+    val ksEnv = System.getenv("MCLITE_KEYSTORE") ?: ""
+    val ksFile: java.io.File? = when {
+        ksEnv.isEmpty() -> null
+        file(ksEnv).exists() -> file(ksEnv)
+        rootProject.file(ksEnv).exists() -> rootProject.file(ksEnv)
+        else -> null
+    }
     signingConfigs {
-        if (ksPath.isNotEmpty() && file(ksPath).exists()) {
+        if (ksFile != null) {
             create("release") {
-                storeFile = file(ksPath)
+                storeFile = ksFile
                 storePassword = System.getenv("MCLITE_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("MCLITE_KEY_ALIAS")
                 keyPassword = System.getenv("MCLITE_KEY_PASSWORD")
