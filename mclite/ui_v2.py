@@ -498,8 +498,8 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------ 版本
     def _page_versions(self):
-        Btn(self.head_right, t("versions.install"), lambda: messagebox.showinfo(
-            t("common.preview"), t("versions.notready")), kind="primary", padx=14, pady=6, size=9).pack(side="right")
+        Btn(self.head_right, t("versions.install"), self.open_install, kind="primary",
+            padx=14, pady=6, size=9).pack(side="right")
 
         installed = self.installed_versions()
         if not installed:
@@ -556,6 +556,114 @@ class App(tk.Tk):
                 self.after(0, lambda: messagebox.showerror(t("common.preview"), msg))
 
         threading.Thread(target=work, daemon=True).start()
+
+    # ------------------------------------------------------------ 安装新版本
+    def open_install(self):
+        """安装新版本向导：选游戏版本 + 加载器，带进度条。"""
+        from . import mojang
+
+        win = tk.Toplevel(self)
+        win.title(t("versions.install.title"))
+        win.configure(bg=BG)
+        win.geometry("560x400")
+        win.transient(self)
+        win.resizable(False, False)
+
+        tk.Label(win, text=t("versions.install.title"), bg=BG, fg=TXT, font=F(16, True),
+                 anchor="w").pack(fill="x", padx=24, pady=(22, 4))
+        tk.Label(win, text=t("versions.install.sub"), bg=BG, fg=SUB, font=F(9),
+                 anchor="w", wraplength=480, justify="left").pack(fill="x", padx=24)
+
+        body = tk.Frame(win, bg=BG)
+        body.pack(fill="x", padx=24, pady=(16, 0))
+
+        mc_vals = []
+        try:
+            for item in (mojang.get_manifest() or {}).get("versions", []):
+                if item.get("type") == "release" and item.get("id"):
+                    mc_vals.append(item["id"])
+        except Exception:
+            mc_vals = []
+        mc_vals = mc_vals[:40]
+
+        tk.Label(body, text=t("versions.install.mc"), bg=BG, fg=SUB, font=F(9),
+                 anchor="w").grid(row=0, column=0, sticky="w", pady=6)
+        mc_sel = Select(body, mc_vals or ["—"], mc_vals[0] if mc_vals else "—", width=24)
+        mc_sel.grid(row=0, column=1, sticky="w", padx=(16, 0), pady=6)
+
+        tk.Label(body, text=t("versions.loader"), bg=BG, fg=SUB, font=F(9),
+                 anchor="w").grid(row=1, column=0, sticky="w", pady=6)
+        loader_sel = Select(
+            body, ["vanilla", "fabric"], "vanilla", width=24,
+            labels=lambda v: t("versions.install.vanilla") if v == "vanilla" else "Fabric")
+        loader_sel.grid(row=1, column=1, sticky="w", padx=(16, 0), pady=6)
+
+        bar = ProgressBar(win, height=10)
+        bar.pack(fill="x", padx=24, pady=(20, 8))
+        state = tk.Label(win, text=t("versions.install.note"), bg=BG, fg=DIM, font=F(9),
+                         anchor="w", wraplength=480, justify="left")
+        state.pack(fill="x", padx=24)
+
+        row = tk.Frame(win, bg=BG)
+        row.pack(fill="x", padx=24, pady=(16, 20))
+
+        busy = {"on": False}
+
+        def refresh_btn():
+            busy["on"] = False
+            go.set_kind("primary")
+            go.config(text=t("versions.install.start"))
+            go.command = start
+
+        def start():
+            if busy["on"]:
+                return
+            vid = mc_sel.value
+            if not vid or vid == "—":
+                return
+            busy["on"] = True
+            go.disable(t("versions.install.busy"))
+            bar.set(0.02)
+
+            def on_status(s):
+                self.after(0, lambda: state.config(text=s, fg=SUB))
+
+            def on_progress(f):
+                self.after(0, lambda: bar.set(max(0.02, float(f))))
+
+            def work():
+                try:
+                    mm = mojang.manifest_map(mojang.get_manifest())
+                    if loader_sel.value == "fabric":
+                        out = mojang.install_fabric(self.game_dir, vid, status=on_status,
+                                                    progress=on_progress, manifest=mm)
+                    else:
+                        out = mojang.Installer(self.game_dir, mm, status=on_status,
+                                               progress=on_progress).install(vid)[0]
+                except Exception as exc:
+                    self.after(0, lambda: done_fail(str(exc)))
+                    return
+                self.after(0, lambda: done_ok(out))
+
+            def done_ok(out):
+                bar.set(1.0)
+                state.config(text=t("versions.install.done") % out, fg=ACC)
+                refresh_btn()
+                if self.page == "versions":
+                    self.show_page("versions")
+
+            def done_fail(err):
+                bar.set(0)
+                state.config(text=t("versions.install.fail") % err, fg=DANGER)
+                refresh_btn()
+
+            threading.Thread(target=work, daemon=True).start()
+
+        Btn(row, t("versions.install.close"), win.destroy, kind="quiet",
+            padx=16, pady=7, size=9).pack(side="right")
+        go = Btn(row, t("versions.install.start"), start, kind="primary",
+                 padx=18, pady=7, size=10)
+        go.pack(side="right", padx=(0, 8))
 
     # ------------------------------------------------------------ 内容（PCL2 风格）
     def _page_content(self):

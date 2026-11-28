@@ -42,6 +42,9 @@
 - 首页：已装版本数、社区票数、我的投票、Modrinth 入口 + 三张快速开始卡
 
 ### 版本与启动
+- **安装新版本**（版本页右上角按钮）：选游戏版本 + 加载器，带进度条与状态行；
+  原版走 Mojang 官方源，Fabric 自动选最新 loader 并先装好依赖的原版。
+  Forge / NeoForge 仍需在仓库 `mclite/ui.py` 的旧界面里安装，新版界面后续接入。
 - 扫描已安装版本（原版 / Fabric / Quilt / Forge / NeoForge），识别加载器与版本目录
 - 启动时按版本自动匹配 Java 8/16/17/21/25，缺哪个下载哪个
 - 内存分配、自定义 JVM 参数、Java 路径、数据目录
@@ -104,9 +107,8 @@ Get-FileHash .\MCLite-android-1.2.0.apk -Algorithm SHA256
 
 ## 已知限制（诚实版）
 
-- **v1.0 桌面端还没有"安装新版本"的完整流程**：版本页目前只扫描已装版本并启动，
-  "安装新版本"按钮是占位提示。v1 的安装逻辑（原版 / Fabric / Quilt / Forge / NeoForge 下载）
-  仍在仓库 `mclite/ui.py` 那套旧界面里可用，后续版本会把安装流程搬进新版界面。
+- **Forge / NeoForge 安装还没搬进新界面**：新版界面的「安装新版本」支持原版与 Fabric；
+  Forge / NeoForge 的安装仍在仓库 `mclite/ui.py` 那套旧界面里可用。
 - **NeoForge** 官方 maven 在部分国内网络被污染，可能卡在依赖下载。
 - **基岩版客户端**由 Microsoft Store 分发，启动器不绕过商店，只检测并启动已安装版本；
   可免安装下载的是**服务端**（BDS）。
