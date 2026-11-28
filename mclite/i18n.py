@@ -473,8 +473,8 @@ STRINGS = {
     "settings.datadir": ("数据目录", "Data folder"),
     "settings.about": ("关于", "About"),
     "settings.about.text": (
-        "MC Lite 正式版 v1.6.0 · MIT 协议 · 开源在 GitHub",
-        "MC Lite Official v1.6.0 · MIT licensed · open source on GitHub",
+        "MC Lite 正式版 v1.7.0 · MIT 协议 · 开源在 GitHub",
+        "MC Lite Official v1.7.0 · MIT licensed · open source on GitHub",
     ),
     "settings.autodetect": (
         "留空时启动器会自动探测本机 Java。",
@@ -490,10 +490,66 @@ STRINGS = {
     "theme.system": ("跟随系统", "Follow system"),
 
     # ---------------------------------------------------------------- 补全
-    "common.v2badge": ("正式版 v1.6.0", "Official v1.6.0"),
+    "common.v2badge": ("正式版 v1.7.0", "Official v1.7.0"),
     "common.browse": ("浏览", "Browse"),
     "common.saved": ("已保存", "Saved"),
     "common.badinput": ("输入无效", "Invalid input"),
+
+    # ---------------------------------------------------------------- 批次5 性能与入口
+    "launch.cachehit": ("体检缓存命中，直接启动", "Health-check cache hit, launching directly"),
+    "perf.download": ("下载源与分片", "Download source & sharding"),
+    "perf.src.auto": ("自动（官方→BMCL）", "Auto (official→BMCL)"),
+    "perf.src.official": ("官方源", "Official"),
+    "perf.src.bmcl": ("BMCLAPI", "BMCLAPI"),
+    "perf.download.desc": (
+        "大文件（客户端 jar、依赖库、资源对象）走 8 线程 Range 分片并发，支持断点续传；"
+        "自动模式下官方源失败会回退 BMCLAPI2 镜像。设置即时生效。",
+        "Large files (client jar, libraries, asset objects) use 8-thread Range sharding with resume; "
+        "Auto falls back to BMCLAPI2 when the official source fails. Applies immediately."),
+    "perf.pool": ("共享内容池（多实例省空间）", "Shared content pool (save disk across instances)"),
+    "perf.pool.open": ("打开共享池", "Open pool"),
+    "perf.pool.join": ("把当前实例加入内容池", "Join current instance to pool"),
+    "perf.pool.cur": ("当前实例：", "Current instance:"),
+    "perf.pool.linked": ("已联接共享池", "linked to pool"),
+    "perf.pool.local": ("独立目录", "local folder"),
+    "perf.pool.desc": (
+        "同卷优先硬链接（按 inode 去重，不额外占块），目录用 junction 指向 %APPDATA%\\MCLite\\shared；"
+        "跨卷自动降级复制。加入时先链接入池并校验可读，才清理原文件，失败自动回滚，绝不先删用户文件。",
+        "Same volume uses hard links (inode dedup, no extra blocks); folders are junctioned to "
+        "%APPDATA%\\MCLite\\shared; cross-volume falls back to copy. Files are linked and verified "
+        "before originals are removed, with automatic rollback on failure."),
+    "perf.pool.title": ("共享内容池", "Shared content pool"),
+    "perf.pool.working": ("正在接入共享池，大目录可能需要一些时间…", "Joining pool, large folders may take a while…"),
+    "perf.pool.done": ("当前实例已接入共享池。", "Current instance joined the pool."),
+    "perf.prewarm": ("启动预热缓存", "Launch prewarm cache"),
+    "perf.prewarm.cached": ("已缓存体检结果，启动时优先命中", "Health check cached; used on next launch"),
+    "perf.prewarm.nocache": ("暂无缓存，启动时现算体检", "No cache yet; health check runs on launch"),
+    "perf.prewarm.now": ("立即预热", "Warm now"),
+    "perf.prewarm.desc": (
+        "上次退出后异步体检并缓存到实例目录 .mclite-prewarm.json；版本 json、客户端 jar、"
+        "Java、mods/资源包/光影/数据包/存档与 libraries 目录的 mtime/大小变化即失效，实例切换按目录隔离。",
+        "After exit, health check is cached to .mclite-prewarm.json in the instance folder; changes to "
+        "version json, client jar, Java, content folders and libraries invalidate it; per-instance isolated."),
+    "perf.prewarm.running": ("正在后台预热…", "Warming up in background…"),
+    "perf.prewarm.done": ("预热完成", "Prewarm done"),
+    "perf.prewarm.novid": ("当前实例还没有最后启动的版本，请先在版本页启动一次。",
+                            "No last version for this instance; launch one from Versions first."),
+    "perf.protocol": ("mclite:// 协议", "mclite:// protocol"),
+    "perf.protocol.on": ("已注册：可用 mclite:// 链接唤起", "Registered: mclite:// links can launch the app"),
+    "perf.protocol.off": ("未注册", "Not registered"),
+    "perf.protocol.toggle": ("注册 / 取消注册", "Register / unregister"),
+    "perf.protocol.desc": (
+        "注册到当前用户 HKCU\\Software\\Classes\\mclite（无需管理员），支持 "
+        "mclite://launch?instance=实例名 与 mclite://join?host=IP&port=端口；"
+        "join 真正联机在后续批次提供，本批先解析并提示。重复唤起只会聚焦已有窗口，不会多开。",
+        "Registers HKCU\\Software\\Classes\\mclite (no admin) for mclite://launch?instance= and "
+        "mclite://join?host=&port=; real join arrives in a later batch. Repeated links focus the existing window."),
+    "perf.launch.noinst": ("协议指定的实例不存在：%s", "Protocol instance not found: %s"),
+    "perf.launch.novid": ("实例「%s」还没有可启动的最后版本，请先在界面启动一次。",
+                          "Instance '%s' has no last launchable version yet."),
+    "perf.join.todo": ("收到联机加入请求：%s:%s\n\n真正的跨启动器联机将在后续批次提供；本批已完成协议解析与唤起。",
+                       "Join request received: %s:%s\n\nCross-launcher multiplayer arrives in a later batch; "
+                       "protocol parsing and app wake-up work now."),
 
     "versions.notready": (
         "安装流程还在接入中，可以先用 v1 安装，或等后续版本。",

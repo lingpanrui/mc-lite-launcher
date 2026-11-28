@@ -17,6 +17,7 @@ from tkinter import filedialog, messagebox, simpledialog
 
 from . import i18n, imgcache, modrinth, poll, util
 from . import doctor, instances, accounts, forge, quilt, contenthub, localcontent
+from . import downloader, sharedpool, prewarm, protocol
 from . import theme
 from .i18n import t
 
@@ -377,11 +378,16 @@ class App(tk.Tk):
         self.local_count_lab = None
         self._dnd_installed = False
         self._dnd_handle = None
+        # 批次5 性能与入口
+        self._protocol_sock = None
+        self._pool_busy = False
 
         self._build_chrome()
         self.show_page("home")
         # 批次4：主窗口全局注册 Windows 原生拖放（WM_DROPFILES），进入内容页后即可用
         self.after(200, self._install_drag_drop)
+        # 批次5：启动后异步预热当前实例最后版本的体检缓存
+        self.after(500, self._start_prewarm)
 
     # ------------------------------------------------------------ 框架
     def _build_chrome(self):
@@ -707,11 +713,13 @@ class App(tk.Tk):
                     except Exception as e:
                         self.after(0, lambda m=str(e): self.set_status("authlib-injector: " + m))
 
-                # 1) 启动前体检 + 自动补齐
+                # 1) 启动前体检 + 自动补齐（批次5：优先读预热缓存，命中即跳过现算）
                 if auto:
                     self.after(0, lambda: self.set_status(t("launch.checking")))
                     try:
-                        info = doctor.inspect(self.game_dir, vid)
+                        info, cached = prewarm.inspect_cached(self.game_dir, vid, exe)
+                        if cached:
+                            self.after(0, lambda: self.set_status(t("launch.cachehit")))
                         if not info.get("ok"):
                             desc = doctor.describe_missing(info)
                             self.after(0, lambda d=desc: self.set_status(t("launch.fixing") % d))
@@ -719,6 +727,7 @@ class App(tk.Tk):
                                 self.game_dir, vid,
                                 status=lambda s: self.after(0, lambda s=s: self.set_status(s)),
                             )
+                            prewarm.invalidate(self.game_dir, vid)
                             self.after(0, lambda: self.set_status(t("launch.fixed")))
                     except Exception as e:
                         msg = str(e)
@@ -740,6 +749,11 @@ class App(tk.Tk):
 
                 # 3) 等待退出，非正常就分析
                 rc = proc.wait()
+                # 批次5：游戏退出后异步刷新体检缓存，供下次启动命中
+                try:
+                    prewarm.warm_async(self.game_dir, vid, exe)
+                except Exception:
+                    pass
                 fresh_crash = doctor.latest_crash(self.game_dir, max_age=180)
                 if rc not in (0, None) or fresh_crash:
                     res = doctor.analyze(self.game_dir, vid, rc, lines)
@@ -3256,9 +3270,67 @@ class App(tk.Tk):
         Btn(row, t("settings.open"), lambda: util.open_path(self.game_dir), kind="ghost",
             padx=12, pady=5, size=9).pack(side="left", padx=(10, 0))
 
+        # 批次5：下载源（官方 / BMCLAPI / 自动回退）
+        box = section(t("perf.download"))
+        row = tk.Frame(box, bg=CARD)
+        row.pack(fill="x")
+        cur_src = self.cfg.get("download_source") or "auto"
+        for key in ("auto", "official", "bmcl"):
+            Btn(row, t("perf.src." + key), lambda k=key: self._set_download_source(k),
+                kind="primary" if cur_src == key else "ghost",
+                padx=16, pady=5, size=9).pack(side="left", padx=(0, 8))
+        tk.Label(box, text=t("perf.download.desc"), bg=CARD, fg=SUB, font=F(8),
+                 wraplength=680, justify="left").pack(anchor="w", pady=(8, 0))
+
+        # 批次5：共享内容池
+        box = section(t("perf.pool"))
+        pool_root = sharedpool.pool_root(self.cfg)
+        row = tk.Frame(box, bg=CARD)
+        row.pack(fill="x")
+        tk.Label(row, text=pool_root, bg=CARD2, fg=TXT, font=F(9), padx=12, pady=7,
+                 anchor="w").pack(side="left", fill="x", expand=True)
+        Btn(row, t("perf.pool.open"), lambda: util.open_path(pool_root), kind="ghost",
+            padx=12, pady=5, size=9).pack(side="left", padx=(10, 0))
+        Btn(row, t("perf.pool.join"), self._join_pool, kind="primary",
+            padx=14, pady=5, size=9).pack(side="left", padx=(8, 0))
+        st_parts = []
+        for k in sharedpool.KINDS:
+            p = os.path.join(self.game_dir, k)
+            st_parts.append("%s: %s" % (k, t("perf.pool.linked") if sharedpool.is_junction(p)
+                                        else t("perf.pool.local")))
+        tk.Label(box, text="%s   %s" % (t("perf.pool.cur"), "   ".join(st_parts)),
+                 bg=CARD, fg=SUB, font=F(8), anchor="w").pack(anchor="w", pady=(8, 0))
+        tk.Label(box, text=t("perf.pool.desc"), bg=CARD, fg=SUB, font=F(8),
+                 wraplength=680, justify="left").pack(anchor="w", pady=(4, 0))
+
+        # 批次5：启动预热
+        box = section(t("perf.prewarm"))
+        cache = prewarm.cache_path(self.game_dir)
+        cached = os.path.isfile(cache)
+        row = tk.Frame(box, bg=CARD)
+        row.pack(fill="x")
+        tk.Label(row, text=t("perf.prewarm.cached") if cached else t("perf.prewarm.nocache"),
+                 bg=CARD, fg=ACC if cached else SUB, font=F(9), anchor="w").pack(side="left")
+        Btn(row, t("perf.prewarm.now"), self._warm_prewarm_now, kind="ghost",
+            padx=12, pady=5, size=9).pack(side="right")
+        tk.Label(box, text=t("perf.prewarm.desc"), bg=CARD, fg=SUB, font=F(8),
+                 wraplength=680, justify="left").pack(anchor="w", pady=(8, 0))
+
+        # 批次5：mclite:// 协议
+        box = section(t("perf.protocol"))
+        reg, _cmd = protocol.is_registered()
+        row = tk.Frame(box, bg=CARD)
+        row.pack(fill="x")
+        tk.Label(row, text=t("perf.protocol.on") if reg else t("perf.protocol.off"),
+                 bg=CARD, fg=ACC if reg else SUB, font=F(9), anchor="w").pack(side="left")
+        Btn(row, t("perf.protocol.toggle"), self._toggle_protocol,
+            kind="primary" if not reg else "danger", padx=14, pady=5, size=9).pack(side="right")
+        tk.Label(box, text=t("perf.protocol.desc"), bg=CARD, fg=SUB, font=F(8),
+                 wraplength=680, justify="left").pack(anchor="w", pady=(8, 0))
+
         # 关于
         box = section(t("settings.about"))
-        tk.Label(box, text="MC Lite 正式版 v1.6.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
+        tk.Label(box, text="MC Lite 正式版 v1.7.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
                  font=F(10, True), anchor="w").pack(anchor="w")
         tk.Label(box, text=t("settings.about.text"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", pady=(4, 0))
 
@@ -3289,6 +3361,140 @@ class App(tk.Tk):
             self.set_status(str(e))
             return
         self.set_status(t("common.saved"))
+
+    # ============================================================ 批次5 性能与入口
+    def _start_prewarm(self):
+        """启动后异步预热当前实例最后版本的体检缓存（不阻塞 UI）。"""
+        try:
+            inst = self.current_inst()
+            vid = inst.get("last_version") or self.cfg.get("last_version") or ""
+            if vid:
+                prewarm.warm_async(self.game_dir, vid, inst.get("java_path") or "")
+        except Exception:
+            pass
+
+    def _warm_prewarm_now(self):
+        inst = self.current_inst()
+        vid = inst.get("last_version") or self.cfg.get("last_version") or ""
+        if not vid:
+            messagebox.showinfo(t("perf.prewarm"), t("perf.prewarm.novid"))
+            return
+        self.set_status(t("perf.prewarm.running"))
+        prewarm.warm_async(self.game_dir, vid, inst.get("java_path") or "")
+        self.after(1200, lambda: self.set_status(t("perf.prewarm.done")))
+
+    def _poll_protocol(self):
+        """主实例后台接收第二实例转发的 mclite:// 消息 / FOCUS 聚焦信号。"""
+        try:
+            while True:
+                msg = protocol.pop_pending()
+                if msg is None:
+                    break
+                if msg == "FOCUS":
+                    try:
+                        self.deiconify()
+                        self.lift()
+                        self.attributes("-topmost", True)
+                        self.after(400, lambda: self.attributes("-topmost", False))
+                    except Exception:
+                        pass
+                else:
+                    self._handle_protocol_url(msg)
+        finally:
+            self.after(300, self._poll_protocol)
+
+    def _handle_protocol_url(self, url):
+        try:
+            p = protocol.parse_url(url)
+        except Exception as e:
+            messagebox.showerror(t("perf.protocol"), str(e))
+            return
+        if p["action"] == "launch":
+            iid = p["instance"]
+            inst = instances.get_instance(self.cfg, iid)
+            if inst is None:
+                for it in instances.list_instances(self.cfg):
+                    if str(it.get("name", "")).lower() == iid.lower():
+                        inst = it
+                        break
+            if inst is None:
+                messagebox.showerror(t("perf.protocol"), t("perf.launch.noinst") % iid)
+                return
+            try:
+                instances.switch(self.cfg, inst["id"])
+                self.game_dir = inst["game_dir"]
+            except Exception:
+                pass
+            vid = inst.get("last_version") or self.cfg.get("last_version") or ""
+            if not vid:
+                messagebox.showinfo(t("perf.protocol"), t("perf.launch.novid") % inst.get("name"))
+                return
+            self.launch_version(vid)
+        else:
+            messagebox.showinfo(
+                t("perf.protocol"),
+                t("perf.join.todo") % (p["host"], p["port"]))
+
+    def _set_download_source(self, src):
+        self.cfg["download_source"] = src
+        util.save_config(self.cfg)
+        self.rebuild()
+
+    def _toggle_protocol(self):
+        reg, _cmd = protocol.is_registered()
+        if reg:
+            ok, msg = protocol.unregister()
+        else:
+            ok, msg = protocol.register()
+        if not ok:
+            messagebox.showerror(t("perf.protocol"), msg)
+        self.rebuild()
+
+    def _join_pool(self):
+        if self._pool_busy:
+            return
+        gd = self.game_dir
+        self._pool_busy = True
+        win = tk.Toplevel(self)
+        win.title(t("perf.pool.title"))
+        win.configure(bg=BG)
+        win.geometry("560x240")
+        win.transient(self)
+        tk.Label(win, text=t("perf.pool.working"), bg=BG, fg=TXT, font=F(11, True),
+                 anchor="w").pack(anchor="w", padx=22, pady=(20, 8))
+        lab = tk.Label(win, text="…", bg=BG, fg=SUB, font=F(9), anchor="w",
+                        wraplength=510, justify="left")
+        lab.pack(anchor="w", padx=22)
+
+        def work():
+            try:
+                rep = sharedpool.join_instance(
+                    gd, status=lambda s: self.after(0, lambda: lab.config(text=s)))
+                self.after(0, lambda: self._pool_done(win, rep))
+            except Exception as e:
+                self.after(0, lambda: self._pool_fail(win, e))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _pool_done(self, win, rep):
+        self._pool_busy = False
+        try:
+            win.destroy()
+        except Exception:
+            pass
+        lines = []
+        for kind, it in (rep.get("kinds") or {}).items():
+            lines.append("%s：%s（%s）" % (kind, it.get("mode"), it.get("detail", "")))
+        messagebox.showinfo(t("perf.pool.title"), "\n".join(lines) or t("perf.pool.done"))
+        self.rebuild()
+
+    def _pool_fail(self, win, err):
+        self._pool_busy = False
+        try:
+            win.destroy()
+        except Exception:
+            pass
+        messagebox.showerror(t("perf.pool.title"), str(err))
 
 
 def main():

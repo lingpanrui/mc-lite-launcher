@@ -15,9 +15,27 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 from . import util
+from . import downloader
 
 MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 FABRIC_META = "https://meta.fabricmc.net/v2"
+
+
+def _download_source():
+    """v1.7.0 下载源设置：auto（官方优先失败回退 BMCL）/ official / bmcl。"""
+    try:
+        return util.load_config().get("download_source") or "auto"
+    except Exception:
+        return "auto"
+
+
+def _fetch_file(url, dest, sha1=None, bmcl=None, desc=""):
+    """统一走分片并发 + 双源回退下载器（批次5）。"""
+    from . import downloader
+    return downloader.fetch(
+        url, dest, expected_sha1=sha1, threads=8,
+        source=_download_source(), bmcl_url=bmcl, desc=desc,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -169,7 +187,8 @@ class Installer:
             jar = os.path.join(vdir, vid + ".jar")
             if not util.file_ok(jar, dl.get("size"), dl.get("sha1")):
                 self.status("下载客户端核心 %s" % vid)
-                util.download_file(dl["url"], jar, expected_sha1=dl.get("sha1"), desc="客户端核心")
+                _fetch_file(dl["url"], jar, dl.get("sha1"),
+                            bmcl=downloader.bmcl_client_url(vid), desc="客户端核心")
             self.progress(0.08)
 
         # 2) 依赖库 + 原生库 ------------------------------------------------
@@ -204,8 +223,10 @@ class Installer:
                 kind, info, name = item
                 dest = os.path.join(self.libs_dir, info["path"].replace("/", os.sep))
                 if not util.file_ok(dest, info.get("size"), info.get("sha1")):
-                    util.download_file(
-                        info["url"], dest, expected_sha1=info.get("sha1"), desc=os.path.basename(info["path"])
+                    _fetch_file(
+                        info["url"], dest, info.get("sha1"),
+                        bmcl=downloader.bmcl_maven_url(info["url"]),
+                        desc=os.path.basename(info["path"]),
                     )
                 if kind == "native" or "-natives-" in name:
                     try:
@@ -258,7 +279,8 @@ class Installer:
             if not util.file_ok(dest, o.get("size"), o.get("sha1")):
                 url = o.get("url") or "https://resources.download.minecraft.net/%s/%s" % (
                     o["hash"][:2], o["hash"])
-                util.download_file(url, dest, expected_sha1=o.get("sha1"), desc="资源")
+                _fetch_file(url, dest, o.get("sha1"),
+                            bmcl=downloader.bmcl_asset_url(url), desc="资源")
             with self._lock:
                 done[0] += 1
                 if done[0] % 40 == 0 or done[0] == total:
@@ -416,7 +438,7 @@ def _arg_value(item, params):
 
 
 def build_command(game_dir, version_id, java_exe, username, memory_mb, width=854, height=480,
-                  launcher_name="MCLite", launcher_version="1.6.0", auth=None, extra_jvm=None):
+                  launcher_name="MCLite", launcher_version="1.7.0", auth=None, extra_jvm=None):
     vj, root_id = resolve_version(game_dir, version_id)
     assets_dir = os.path.join(game_dir, "assets")
     libs_dir = os.path.join(game_dir, "libraries")

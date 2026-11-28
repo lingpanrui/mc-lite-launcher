@@ -1,8 +1,8 @@
-# PyInstaller 版本资源：v1.6.0 正式版
+# PyInstaller 版本资源：v1.7.0 正式版
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 6, 0, 0),
-    prodvers=(1, 6, 0, 0),
+    filevers=(1, 7, 0, 0),
+    prodvers=(1, 7, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -15,14 +15,14 @@ VSVersionInfo(
       StringTable(
         u'080404B0',
         [StringStruct(u'CompanyName', u'MCLite 项目'),
-         StringStruct(u'FileDescription', u'MC Lite 启动器 正式版 v1.6.0'),
-         StringStruct(u'FileVersion', u'1.6.0.0'),
+         StringStruct(u'FileDescription', u'MC Lite 启动器 正式版 v1.7.0'),
+         StringStruct(u'FileVersion', u'1.7.0.0'),
          StringStruct(u'InternalName', u'MCLite-v2'),
          StringStruct(u'LegalCopyright', u'Copyright © 2026 lingpanrui，MIT License'),
          StringStruct(u'OriginalFilename', u'MCLite-v2.exe'),
          StringStruct(u'ProductName', u'MC Lite'),
-         StringStruct(u'ProductVersion', u'1.6.0.0'),
-         StringStruct(u'Comments', u'正式版 v1.6.0：本地内容管理（模组/资源包/光影/数据包/存档扫描、启用禁用、安全删除、拖放导入、jar 加载器识别、CurseForge 闭环）')]),
+         StringStruct(u'ProductVersion', u'1.7.0.0'),
+         StringStruct(u'Comments', u'正式版 v1.7.0：共享内容池（硬链接/junction）、多线程分片下载+BMCL双源断点续传、启动预热缓存、CLI、mclite:// 协议')]),
     ]),
     VarFileInfo([VarStruct(u'Translation', [2052, 1200])])
   ]
