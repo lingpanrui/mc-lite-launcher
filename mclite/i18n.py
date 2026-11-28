@@ -282,17 +282,24 @@ STRINGS = {
     "settings.datadir": ("数据目录", "Data folder"),
     "settings.about": ("关于", "About"),
     "settings.about.text": (
-        "MC Lite 正式版 v1.0 · MIT 协议 · 开源在 GitHub",
-        "MC Lite Official v1.0 · MIT licensed · open source on GitHub",
+        "MC Lite 正式版 v1.2 · MIT 协议 · 开源在 GitHub",
+        "MC Lite Official v1.2 · MIT licensed · open source on GitHub",
     ),
     "settings.autodetect": (
         "留空时启动器会自动探测本机 Java。",
         "Leave empty and the launcher auto-detects local Java.",
     ),
     "settings.pickjava": ("选择 javaw.exe", "Select javaw.exe"),
+    "settings.appearance": ("外观", "Appearance"),
+    "settings.theme": ("主题", "Theme"),
+    "settings.accent": ("强调色", "Accent color"),
+    "theme.dark": ("深色", "Dark"),
+    "theme.light": ("浅色", "Light"),
+    "theme.midnight": ("夜色蓝", "Midnight"),
+    "theme.system": ("跟随系统", "Follow system"),
 
     # ---------------------------------------------------------------- 补全
-    "common.v2badge": ("正式版 v1.0", "Official v1.0"),
+    "common.v2badge": ("正式版 v1.2", "Official v1.2"),
     "common.browse": ("浏览", "Browse"),
     "common.saved": ("已保存", "Saved"),
     "common.badinput": ("输入无效", "Invalid input"),
@@ -308,6 +315,39 @@ STRINGS = {
         "没找到可用的 Java，请到设置里指定 javaw.exe。",
         "No usable Java found — point Settings at javaw.exe.",
     ),
+
+    # ---------------------------------------------------------------- 体检 / 崩溃
+    "launch.checking": ("正在检查游戏文件…", "Checking game files…"),
+    "launch.fixing": ("缺少 %s，正在自动补齐…", "Missing %s — repairing automatically…"),
+    "launch.fixed": ("文件已补齐，正在启动", "Files repaired, launching"),
+    "launch.repairfail": ("自动补齐失败：%s", "Auto-repair failed: %s"),
+    "settings.diag": ("启动与诊断", "Launch and diagnostics"),
+    "settings.autorepair": ("启动前自动补齐缺失文件", "Auto-repair missing files before launch"),
+    "settings.autorepair.desc": (
+        "每次启动前对比官方清单，缺的库和资源自动补上；不足 1 秒，不会重下已有文件。",
+        "Checks the install against the official manifest before every launch and fetches only what is missing.",
+    ),
+    "settings.crashdesc": (
+        "游戏崩溃后自动读 crash-reports 与 latest.log，给出人话原因和修复建议，可一键补齐重试。",
+        "When the game crashes, it reads crash-reports and latest.log, explains the cause and offers a one-click repair.",
+    ),
+    "settings.on": ("已开启", "On"),
+    "settings.off": ("已关闭", "Off"),
+    "crash.title": ("游戏崩了，已自动分析", "The game crashed — analysis ready"),
+    "crash.sub": ("退出码 %s · 找到 %d 条可能原因", "Exit code %s · %d probable cause(s)"),
+    "crash.none": (
+        "没匹配到明确原因，先看日志末尾这几行。",
+        "No known pattern matched — check the last lines of the log.",
+    ),
+    "crash.tail": ("日志末尾", "End of log"),
+    "crash.repair": ("自动补齐并重试", "Repair and retry"),
+    "crash.openlogs": ("打开日志目录", "Open log folder"),
+    "crash.save": ("保存诊断报告", "Save report"),
+    "crash.saved": ("诊断报告已保存：%s", "Report saved to %s"),
+    "crash.close": ("关闭", "Close"),
+    "crash.retrying": ("正在补齐文件…", "Repairing files…"),
+    "crash.repaired": ("补齐完成，再点一次启动就行", "Repaired — hit Launch again"),
+    "crash.fixlabel": ("怎么办", "What to do"),
 
     "content.types": ("资源类型", "Resource type"),
     "content.tab.pack": ("整合包", "Modpacks"),
@@ -378,6 +418,7 @@ STRINGS = {
     "f.i18n.icon": ("语", "I"),
     "f.dldetail.icon": ("详", "D"),
 }
+
 
 
 

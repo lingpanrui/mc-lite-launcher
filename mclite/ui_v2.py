@@ -15,6 +15,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 from . import i18n, imgcache, modrinth, poll, util
+from . import doctor
+from . import theme
 from .i18n import t
 
 # ---------------------------------------------------------------- 主题
@@ -31,6 +33,7 @@ DIM = "#5f6878"
 ACC = "#3ddc84"
 ACC2 = "#2fb56e"
 ACC_HOVER = "#57e796"
+ON_ACC = "#08130c"
 WARN = "#f0b429"
 DANGER = "#e06c75"
 
@@ -61,8 +64,8 @@ def F(size=10, bold=False):
     return (fam, size, "bold") if bold else (fam, size)
 
 
-def label(parent, text="", color=TXT, size=10, bold=False, bg=None, **kw):
-    return tk.Label(parent, text=text, bg=bg or parent["bg"], fg=color,
+def label(parent, text="", color=None, size=10, bold=False, bg=None, **kw):
+    return tk.Label(parent, text=text, bg=bg or parent["bg"], fg=color or TXT,
                     font=F(size, bold), anchor="w", **kw)
 
 
@@ -158,7 +161,8 @@ class Btn(tk.Label):
 
 
 class ScrollArea(tk.Frame):
-    def __init__(self, parent, bg=BG):
+    def __init__(self, parent, bg=None):
+        bg = bg or BG
         super().__init__(parent, bg=bg)
         self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
         self.canvas.pack(side="left", fill="both", expand=True)
@@ -187,9 +191,9 @@ class ScrollArea(tk.Frame):
 
 
 class ProgressBar(tk.Canvas):
-    def __init__(self, parent, bg=CARD2, fg=ACC, height=8):
+    def __init__(self, parent, bg=None, fg=None, height=8):
         super().__init__(parent, height=height, bg=parent["bg"], highlightthickness=0)
-        self.bg_color, self.fg_color, self.value = bg, fg, 0.0
+        self.bg_color, self.fg_color, self.value = bg or CARD2, fg or ACC, 0.0
         self.bind("<Configure>", lambda e: self._draw())
 
     def set(self, v):
@@ -316,6 +320,7 @@ class App(tk.Tk):
         self.configure(bg=BG)
 
         self.cfg = util.load_config()
+        self._apply_theme()
         self.game_dir = self.cfg.get("game_dir") or os.path.join(util.app_root(), "game")
 
         self.page = "home"
@@ -399,6 +404,33 @@ class App(tk.Tk):
         except Exception:
             pass
 
+    # ------------------------------------------------------------ 主题
+    def _apply_theme(self):
+        """把选中的配色写回模块级常量，随后重建界面即可生效"""
+        th = theme.load(self.cfg)
+        g = globals()
+        for key in ("BG", "SIDEBAR", "SIDEBAR_ON", "CARD", "CARD2", "CARD3", "LINE",
+                    "TXT", "SUB", "DIM", "WARN", "DANGER", "ACC", "ACC2", "ACC_HOVER", "ON_ACC"):
+            if key in th:
+                g[key] = th[key]
+        Btn.KINDS = {
+            "primary": (g["ACC"], g["ON_ACC"], g["ACC_HOVER"]),
+            "ghost": (g["CARD2"], g["TXT"], g["CARD3"]),
+            "outline": (g["CARD"], g["ACC"], g["CARD2"]),
+            "danger": (g["CARD"], g["DANGER"], g["CARD2"]),
+            "quiet": (g["CARD"], g["SUB"], g["CARD2"]),
+        }
+
+    def switch_theme(self, key):
+        self.cfg["theme"] = key
+        util.save_config(self.cfg)
+        self.rebuild()
+
+    def switch_accent(self, key):
+        self.cfg["accent"] = key
+        util.save_config(self.cfg)
+        self.rebuild()
+
     def switch_lang(self, code):
         if code == i18n.get_lang():
             return
@@ -406,9 +438,11 @@ class App(tk.Tk):
         self.rebuild()
 
     def rebuild(self):
+        self._apply_theme()
         page = self.page
         for w in self.winfo_children():
             w.destroy()
+        self.configure(bg=BG)
         self._build_chrome()
         self.show_page(page)
 
@@ -442,10 +476,10 @@ class App(tk.Tk):
         builder()
 
     # ------------------------------------------------------------ 首页
-    def _stat_card(self, parent, value, title, color=ACC):
+    def _stat_card(self, parent, value, title, color=None):
         c = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
         c.pack(side="left", fill="both", expand=True, padx=(0, 12))
-        tk.Label(c, text=str(value), bg=CARD, fg=color, font=F(20, True), anchor="w").pack(anchor="w", padx=18, pady=(14, 0))
+        tk.Label(c, text=str(value), bg=CARD, fg=color or ACC, font=F(20, True), anchor="w").pack(anchor="w", padx=18, pady=(14, 0))
         tk.Label(c, text=title, bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", padx=18, pady=(2, 14))
 
     def installed_versions(self):
@@ -533,29 +567,156 @@ class App(tk.Tk):
                 kind="quiet", padx=10, pady=6, size=8).pack(side="right")
 
     def launch_version(self, vid):
-        self.set_status(t("versions.launching") % vid)
         cfg = self.cfg
+        self.set_status(t("versions.launching") % vid)
+        auto = bool(cfg.get("auto_repair", True))
 
         def work():
+            from . import java as jm, mojang
+
             try:
-                from . import java as jm, mojang
                 exe = cfg.get("java_path")
                 if not exe or not os.path.isfile(exe):
                     javas = jm.find_javas() or []
                     exe = javas[0][1] if javas else None
                 if not exe:
-                    self.after(0, lambda: messagebox.showerror(t("common.preview"), t("versions.nojava")))
+                    self.after(0, lambda: messagebox.showerror(t("common.v2badge"), t("versions.nojava")))
                     return
-                cmd, vj, root, missing = mojang.build_command(
+
+                # 1) 启动前体检 + 自动补齐
+                if auto:
+                    self.after(0, lambda: self.set_status(t("launch.checking")))
+                    try:
+                        info = doctor.inspect(self.game_dir, vid)
+                        if not info.get("ok"):
+                            desc = doctor.describe_missing(info)
+                            self.after(0, lambda d=desc: self.set_status(t("launch.fixing") % d))
+                            doctor.repair(
+                                self.game_dir, vid,
+                                status=lambda s: self.after(0, lambda s=s: self.set_status(s)),
+                            )
+                            self.after(0, lambda: self.set_status(t("launch.fixed")))
+                    except Exception as e:
+                        msg = str(e)
+                        self.after(0, lambda m=msg: self.set_status(t("launch.repairfail") % m))
+
+                # 2) 组装命令并启动
+                cmd, _vj, _root, _missing = mojang.build_command(
                     self.game_dir, vid, exe, cfg.get("username") or "Steve",
                     int(cfg.get("memory_mb") or 4096), int(cfg.get("width") or 854), int(cfg.get("height") or 480))
-                proc = mojang.launch(cmd, self.game_dir)
+                lines = []
+                proc = mojang.launch(cmd, self.game_dir, on_output=lines.append)
                 self.after(0, lambda: self.set_status(t("versions.launched") % vid))
+
+                # 3) 等待退出，非正常就分析
+                rc = proc.wait()
+                fresh_crash = doctor.latest_crash(self.game_dir, max_age=180)
+                if rc not in (0, None) or fresh_crash:
+                    res = doctor.analyze(self.game_dir, vid, rc, lines)
+                    self.after(0, lambda r=res: self._open_crash(r, vid))
             except Exception as e:
                 msg = str(e)
-                self.after(0, lambda: messagebox.showerror(t("common.preview"), msg))
+                self.after(0, lambda m=msg: messagebox.showerror(t("common.v2badge"), m))
 
         threading.Thread(target=work, daemon=True).start()
+
+    # ------------------------------------------------------------ 崩溃诊断
+    def _open_crash(self, result, vid):
+        sev_color = {"error": DANGER, "warn": WARN, "info": ACC}
+        win = tk.Toplevel(self)
+        win.title(t("crash.title"))
+        win.configure(bg=BG)
+        win.geometry("700x660")
+        win.minsize(620, 520)
+        win.transient(self)
+
+        head = tk.Frame(win, bg=BG)
+        head.pack(fill="x", padx=26, pady=(20, 2))
+        tk.Label(head, text=t("crash.title"), bg=BG, fg=TXT, font=F(17, True),
+                 anchor="w").pack(anchor="w")
+        n = len([f for f in result.get("findings") or [] if f["code"] != "summary"])
+        tk.Label(head, text=t("crash.sub") % (result.get("exit_code"), n), bg=BG, fg=SUB,
+                 font=F(9), anchor="w").pack(anchor="w", pady=(4, 0))
+
+        area = ScrollArea(win, bg=BG)
+        area.pack(fill="both", expand=True, padx=18, pady=(10, 4))
+        parent = area.inner
+
+        findings = result.get("findings") or []
+        if not findings:
+            tk.Label(parent, text=t("crash.none"), bg=BG, fg=SUB, font=F(9), anchor="w",
+                     wraplength=600, justify="left").pack(anchor="w", pady=(2, 10))
+
+        for f in findings:
+            card = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+            card.pack(fill="x", pady=(0, 10))
+            tk.Frame(card, bg=sev_color.get(f["sev"], ACC), width=4).pack(side="left", fill="y")
+            body = tk.Frame(card, bg=CARD)
+            body.pack(side="left", fill="both", expand=True, padx=16, pady=13)
+            tk.Label(body, text=f["title"], bg=CARD, fg=TXT, font=F(11, True), anchor="w",
+                     wraplength=560, justify="left").pack(anchor="w")
+            if f.get("detail"):
+                tk.Label(body, text=f["detail"], bg=CARD, fg=SUB, font=F(9), anchor="w",
+                         wraplength=560, justify="left").pack(anchor="w", pady=(6, 0))
+            if f.get("fix"):
+                tk.Label(body, text=t("crash.fixlabel"), bg=CARD, fg=DIM, font=F(8, True),
+                         anchor="w").pack(anchor="w", pady=(10, 2))
+                tk.Label(body, text=f["fix"], bg=CARD, fg="#96f0be", font=F(9), anchor="w",
+                         wraplength=560, justify="left").pack(anchor="w")
+
+        tail = result.get("tail") or []
+        if tail:
+            tk.Label(parent, text=t("crash.tail"), bg=BG, fg=DIM, font=F(8, True),
+                     anchor="w").pack(anchor="w", pady=(2, 4))
+            box = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+            box.pack(fill="x", pady=(0, 10))
+            tk.Label(box, text="\n".join(tail), bg=CARD, fg=SUB, font=("Consolas", 8),
+                     anchor="w", justify="left", wraplength=600).pack(anchor="w", padx=12, pady=10)
+
+        state = tk.Label(win, text="", bg=BG, fg=ACC, font=F(9), anchor="w")
+        state.pack(fill="x", padx=26, pady=(0, 2))
+
+        row = tk.Frame(win, bg=BG)
+        row.pack(fill="x", padx=24, pady=(2, 18))
+
+        need_repair = any(f.get("action") == "repair" for f in findings)
+
+        def do_save():
+            p = doctor.save_report(self.game_dir, result, vid)
+            state.config(text=t("crash.saved") % p if p else "")
+
+        if need_repair:
+            rep = Btn(row, t("crash.repair"), kind="primary", padx=16, pady=8, size=9)
+            rep.pack(side="left", padx=(0, 8))
+
+            def run_repair(btn=rep):
+                btn.disable(t("crash.retrying"))
+                state.config(text=t("crash.retrying"), fg=SUB)
+
+                def restore(text, color=ACC):
+                    btn.set_kind("primary")
+                    btn.config(text=t("crash.repair"))
+                    btn.command = run_repair
+                    state.config(text=text, fg=color)
+
+                def w():
+                    try:
+                        doctor.repair(self.game_dir, vid)
+                        self.after(0, lambda: restore(t("crash.repaired")))
+                    except Exception as e:
+                        msg = t("launch.repairfail") % str(e)
+                        self.after(0, lambda m=msg: restore(m, DANGER))
+
+                threading.Thread(target=w, daemon=True).start()
+
+            rep.command = run_repair
+
+        Btn(row, t("crash.save"), do_save, kind="ghost", padx=14, pady=8, size=9).pack(side="left", padx=(0, 8))
+        Btn(row, t("crash.openlogs"),
+            lambda: util.open_path(os.path.join(self.game_dir, "logs")),
+            kind="ghost", padx=14, pady=8, size=9).pack(side="left", padx=(0, 8))
+        Btn(row, t("crash.close"), win.destroy, kind="quiet", padx=16, pady=8,
+            size=9).pack(side="right")
 
     # ------------------------------------------------------------ 安装新版本
     def open_install(self):
@@ -1173,6 +1334,30 @@ class App(tk.Tk):
                 kind="primary" if code == i18n.get_lang() else "ghost",
                 padx=18, pady=6, size=9).pack(side="left", padx=(0, 8))
 
+        # 外观：主题 + 强调色
+        box = section(t("settings.appearance"))
+        tk.Label(box, text=t("settings.theme"), bg=CARD, fg=SUB, font=F(8),
+                 anchor="w").pack(anchor="w", pady=(0, 6))
+        row = tk.Frame(box, bg=CARD)
+        row.pack(fill="x")
+        cur_theme = self.cfg.get("theme") or "dark"
+        for key in ("dark", "light", "midnight", "system"):
+            Btn(row, t("theme." + key), lambda k=key: self.switch_theme(k),
+                kind="primary" if key == cur_theme else "ghost",
+                padx=14, pady=6, size=9).pack(side="left", padx=(0, 8))
+
+        tk.Label(box, text=t("settings.accent"), bg=CARD, fg=SUB, font=F(8),
+                 anchor="w").pack(anchor="w", pady=(14, 6))
+        arow = tk.Frame(box, bg=CARD)
+        arow.pack(fill="x")
+        cur_accent = self.cfg.get("accent") or "green"
+        for key, cols in theme.ACCENTS.items():
+            chip = tk.Label(arow, text="   ", bg=cols[0], width=4, pady=7, cursor="hand2",
+                            highlightthickness=2,
+                            highlightbackground=(TXT if key == cur_accent else cols[0]))
+            chip.pack(side="left", padx=(0, 10))
+            chip.bind("<ButtonRelease-1>", lambda e, k=key: self.switch_accent(k))
+
         # 内存
         box = section(t("settings.memory"))
         row = tk.Frame(box, bg=CARD)
@@ -1199,6 +1384,34 @@ class App(tk.Tk):
         detected = jm.find_javas() if False else None  # 避免启动时全盘扫描
         tk.Label(box, text=t("settings.autodetect"), bg=CARD, fg=SUB, font=F(8), anchor="w").pack(anchor="w", pady=(8, 0))
 
+        # 启动与诊断
+        box = section(t("settings.diag"))
+        st = {"on": bool(self.cfg.get("auto_repair", True))}
+        row = tk.Frame(box, bg=CARD)
+        row.pack(fill="x")
+        tk.Label(row, text=t("settings.autorepair"), bg=CARD, fg=TXT, font=F(10),
+                 anchor="w").pack(side="left")
+        tog = Btn(row, t("settings.on") if st["on"] else t("settings.off"),
+                  kind="primary" if st["on"] else "ghost", padx=16, pady=5, size=9)
+        tog.pack(side="right")
+
+        def flip():
+            st["on"] = not st["on"]
+            self.cfg["auto_repair"] = st["on"]
+            util.save_config(self.cfg)
+            tog.set_kind("primary" if st["on"] else "ghost")
+            tog.config(text=t("settings.on") if st["on"] else t("settings.off"))
+
+        tog.command = flip
+
+        tk.Label(box, text=t("settings.autorepair.desc"), bg=CARD, fg=SUB, font=F(8), anchor="w",
+                 wraplength=680, justify="left").pack(anchor="w", pady=(8, 0))
+        tk.Label(box, text=t("settings.crashdesc"), bg=CARD, fg=SUB, font=F(8), anchor="w",
+                 wraplength=680, justify="left").pack(anchor="w", pady=(4, 0))
+        Btn(box, t("crash.openlogs"),
+            lambda: util.open_path(os.path.join(self.game_dir, "logs")),
+            kind="quiet", padx=14, pady=5, size=9).pack(anchor="w", pady=(10, 0))
+
         # 目录
         box = section(t("settings.datadir"))
         row = tk.Frame(box, bg=CARD)
@@ -1209,7 +1422,7 @@ class App(tk.Tk):
 
         # 关于
         box = section(t("settings.about"))
-        tk.Label(box, text="MC Lite 正式版 v1.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
+        tk.Label(box, text="MC Lite 正式版 v1.2  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
                  font=F(10, True), anchor="w").pack(anchor="w")
         tk.Label(box, text=t("settings.about.text"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", pady=(4, 0))
 
@@ -1240,6 +1453,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
