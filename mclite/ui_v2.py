@@ -16,7 +16,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 
 from . import i18n, imgcache, modrinth, poll, util
-from . import doctor, instances, accounts, forge, quilt, contenthub
+from . import doctor, instances, accounts, forge, quilt, contenthub, localcontent
 from . import theme
 from .i18n import t
 
@@ -57,8 +57,9 @@ CONTENT_TYPES = [
     ("datapack", "content.tab.data", "datapacks"),
 ]
 
-# 非检索类资源中心页：世界（本地入口）/ CurseForge（诚实标注，不做假搜索）
+# 非检索类资源中心页：已安装（本地内容管理）/ 世界（本地入口）/ CurseForge（诚实标注，不做假搜索）
 CONTENT_EXTRA_NAV = [
+    ("local", "content.tab.local"),
     ("world", "content.tab.world"),
     ("curseforge", "content.tab.cf"),
 ]
@@ -369,9 +370,18 @@ class App(tk.Tk):
         self.content_loading_more = False
         self.detail_hit = None
         self.detail_pack_path = None
+        # 批次4 本地内容管理
+        self.local_tab = "mod"
+        self.local_game_dir = ""
+        self.local_area = None
+        self.local_count_lab = None
+        self._dnd_installed = False
+        self._dnd_handle = None
 
         self._build_chrome()
         self.show_page("home")
+        # 批次4：主窗口全局注册 Windows 原生拖放（WM_DROPFILES），进入内容页后即可用
+        self.after(200, self._install_drag_drop)
 
     # ------------------------------------------------------------ 框架
     def _build_chrome(self):
@@ -1960,7 +1970,10 @@ class App(tk.Tk):
         right = tk.Frame(outer, bg=BG)
         right.pack(side="left", fill="both", expand=True)
 
-        # 世界 / CurseForge 为诚实说明页，不走检索筛选
+        # 已安装 / 世界 / CurseForge 为非检索页，不走在线筛选
+        if self.content_type == "local":
+            self._render_local_panel(right)
+            return
         if self.content_type == "world":
             self._render_world_panel(right)
             return
@@ -2425,6 +2438,8 @@ class App(tk.Tk):
         row.pack(fill="x", pady=(14, 0))
         Btn(row, t("content.world.open_saves"), self._open_saves_dir, kind="primary",
             padx=18, pady=8, size=10).pack(side="left", padx=(0, 10))
+        Btn(row, t("content.world.manage_saves"), self._goto_local_saves, kind="outline",
+            padx=16, pady=8, size=10).pack(side="left", padx=(0, 10))
         Btn(row, t("content.world.ext_pm"),
             lambda: self._open_external("https://www.planetminecraft.com/"),
             kind="ghost", padx=14, pady=8, size=9).pack(side="left", padx=(0, 10))
@@ -2449,8 +2464,272 @@ class App(tk.Tk):
         Btn(row, t("content.cf.open_web"),
             lambda: self._open_external("https://www.curseforge.com/minecraft/mc-mods"),
             kind="primary", padx=18, pady=8, size=10).pack(side="left")
+        Btn(row, t("content.cf.goto_local"), lambda: self._switch_type("local"),
+            kind="outline", padx=16, pady=8, size=10).pack(side="left", padx=(10, 0))
         tk.Label(inner, text=t("content.cf.guide"), bg=CARD, fg=DIM, font=F(8),
                  anchor="w", justify="left", wraplength=920).pack(anchor="w", pady=(12, 0))
+
+    # ------------------------------------------------------------ 批次4 本地内容管理
+    LOCAL_TABS = [
+        ("mod", "local.tab.mod"),
+        ("resourcepack", "local.tab.res"),
+        ("shader", "local.tab.shader"),
+        ("datapack", "local.tab.data"),
+        ("saves", "local.tab.saves"),
+    ]
+
+    def _render_local_panel(self, parent):
+        inst = self.current_inst()
+        game_dir = inst["game_dir"]
+        self.local_game_dir = game_dir
+        inst_name = self.inst_display_name(inst)
+
+        card = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        card.pack(fill="x", pady=(0, 12))
+        head = tk.Frame(card, bg=CARD)
+        head.pack(fill="x", padx=18, pady=(14, 4))
+        tk.Label(head, text=t("local.title"), bg=CARD, fg=TXT, font=F(14, True),
+                 anchor="w").pack(side="left")
+        tk.Label(head, text=t("local.current_inst") % inst_name, bg=CARD, fg=ACC,
+                 font=F(10, True), anchor="w").pack(side="left", padx=(14, 0))
+        tk.Label(card, text=t("local.game_dir") % game_dir, bg=CARD, fg=DIM, font=F(8),
+                 anchor="w", wraplength=980, justify="left").pack(fill="x", padx=18)
+
+        btnrow = tk.Frame(card, bg=CARD)
+        btnrow.pack(fill="x", padx=18, pady=(10, 14))
+        Btn(btnrow, t("local.import"), self._local_import_dialog, kind="primary",
+            padx=16, pady=7, size=9).pack(side="left", padx=(0, 8))
+        Btn(btnrow, t("local.open_dir"), self._local_open_category_dir, kind="ghost",
+            padx=14, pady=7, size=9).pack(side="left", padx=(0, 8))
+        Btn(btnrow, t("local.refresh"), self._local_refresh, kind="ghost",
+            padx=14, pady=7, size=9).pack(side="left")
+        tk.Label(btnrow, text=t("local.drag_hint"), bg=CARD, fg=DIM, font=F(8),
+                 anchor="e", justify="right").pack(side="right")
+
+        tabrow = tk.Frame(parent, bg=BG)
+        tabrow.pack(fill="x", pady=(0, 10))
+        self.local_tab_btns = {}
+        for key, tk_key in self.LOCAL_TABS:
+            active = (key == self.local_tab)
+            b = Btn(tabrow, t(tk_key), lambda k=key: self._local_switch_tab(k),
+                    kind="primary" if active else "ghost", padx=16, pady=6, size=9, bold=active)
+            b.pack(side="left", padx=(0, 8))
+            self.local_tab_btns[key] = b
+
+        self.local_count_lab = tk.Label(parent, text="", bg=BG, fg=SUB, font=F(9), anchor="w")
+        self.local_count_lab.pack(fill="x", pady=(0, 8))
+
+        self.local_area = ScrollArea(parent, bg=BG)
+        self.local_area.pack(fill="both", expand=True)
+        self._populate_local_rows()
+        self._install_drag_drop()
+
+    def _local_switch_tab(self, key):
+        if key == self.local_tab:
+            return
+        self.local_tab = key
+        self.show_page("content")
+
+    def _goto_local_saves(self):
+        self.local_tab = "saves"
+        self._switch_type("local")
+
+    def _local_refresh(self):
+        self._populate_local_rows()
+        self.set_status(t("local.refreshed"))
+
+    def _fmt_ts(self, ts):
+        try:
+            return datetime.datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return "—"
+
+    def _populate_local_rows(self):
+        area = getattr(self, "local_area", None)
+        if area is None:
+            return
+        area.clear()
+        game_dir = self.local_game_dir or self.current_inst()["game_dir"]
+        inst = self.current_inst()
+        inst_loader = localcontent.instance_loader(game_dir, inst.get("last_version") or "")
+        cat = self.local_tab
+        try:
+            items = localcontent.scan_category(game_dir, cat, inst_loader=inst_loader)
+        except Exception as e:
+            items = []
+            self.set_status(str(e))
+        if self.local_count_lab is not None:
+            self.local_count_lab.config(text=t("local.count") % len(items))
+        if not items:
+            empty = t("local.empty_saves") if cat == "saves" else t("local.empty")
+            tk.Label(area.inner, text=empty, bg=BG, fg=DIM, font=F(10), anchor="w",
+                     justify="left", wraplength=960).pack(anchor="w", pady=30)
+            return
+        for it in items:
+            self._local_row(area.inner, it)
+
+    def _local_row(self, parent, it):
+        cat = it["category"]
+        card = tk.Frame(parent, bg=CARD2, highlightbackground=LINE, highlightthickness=1)
+        card.pack(fill="x", pady=4)
+        row = tk.Frame(card, bg=CARD2)
+        row.pack(fill="x", padx=14, pady=10)
+
+        if cat == "saves":
+            tk.Label(row, text="📁", bg=CARD2, fg=SUB, font=F(13), width=2).pack(side="left", padx=(0, 10))
+        elif it["enabled"]:
+            tk.Label(row, text="●", bg=CARD2, fg=ACC, font=F(11), width=2).pack(side="left", padx=(0, 10))
+        else:
+            tk.Label(row, text="○", bg=CARD2, fg=DIM, font=F(11), width=2).pack(side="left", padx=(0, 10))
+
+        mid = tk.Frame(row, bg=CARD2)
+        mid.pack(side="left", fill="both", expand=True)
+        title = it.get("world_name") if cat == "saves" else it["name"]
+        name_color = TXT if (cat == "saves" or it["enabled"]) else DIM
+        tk.Label(mid, text=title, bg=CARD2, fg=name_color, font=F(10, True),
+                 anchor="w").pack(anchor="w")
+        if cat == "saves":
+            meta = t("local.meta_saves") % (util.human_size(it["size"]), self._fmt_ts(it["mtime"]))
+        else:
+            extra = ""
+            if it.get("loader"):
+                extra += " · " + str(it["loader"])
+            if it.get("mod_version"):
+                extra += " " + str(it["mod_version"])
+            meta = t("local.meta_file") % (
+                util.human_size(it["size"]), self._fmt_ts(it["mtime"]),
+                it.get("source") or "本地文件", extra)
+        tk.Label(mid, text=meta, bg=CARD2, fg=SUB, font=F(8), anchor="w").pack(anchor="w", pady=(2, 0))
+        if it.get("warning"):
+            tk.Label(mid, text="⚠ " + it["warning"], bg=CARD2, fg=WARN, font=F(8),
+                     anchor="w", justify="left", wraplength=620).pack(anchor="w", pady=(3, 0))
+
+        acts = tk.Frame(row, bg=CARD2)
+        acts.pack(side="right")
+        if cat == "saves":
+            Btn(acts, t("local.open_folder"), lambda: self._local_open_item(it),
+                kind="ghost", padx=12, pady=6, size=9).pack(side="left")
+        else:
+            if it["enabled"]:
+                Btn(acts, t("local.disable"), lambda: self._local_toggle(it),
+                    kind="ghost", padx=12, pady=6, size=9).pack(side="left", padx=(0, 6))
+            else:
+                Btn(acts, t("local.enable"), lambda: self._local_toggle(it),
+                    kind="primary", padx=12, pady=6, size=9).pack(side="left", padx=(0, 6))
+            Btn(acts, t("local.delete"), lambda: self._local_delete(it),
+                kind="danger", padx=12, pady=6, size=9).pack(side="left")
+
+    def _local_toggle(self, it):
+        try:
+            target, enabling = localcontent.toggle_enabled(it["path"])
+            self.set_status((t("local.enabled") if enabling else t("local.disabled")) % os.path.basename(target))
+        except localcontent.ConflictError as e:
+            messagebox.showwarning(t("local.toggle_conflict_title"), str(e), parent=self)
+        except Exception as e:
+            messagebox.showerror("MC Lite", str(e), parent=self)
+        self._populate_local_rows()
+
+    def _local_delete(self, it):
+        if not messagebox.askyesno(t("local.delete_title"),
+                                   t("local.delete_confirm") % it["name"], parent=self):
+            return
+        try:
+            removed = localcontent.delete_content_file(self.local_game_dir, it["category"], it["name"])
+            self.set_status(t("local.deleted") % os.path.basename(removed))
+        except Exception as e:
+            messagebox.showerror("MC Lite", str(e), parent=self)
+        self._populate_local_rows()
+
+    def _local_open_category_dir(self):
+        try:
+            d = localcontent.category_dir(self.local_game_dir, self.local_tab)
+            os.makedirs(d, exist_ok=True)
+            util.open_path(d)
+        except Exception as e:
+            messagebox.showerror("MC Lite", str(e), parent=self)
+
+    def _local_open_item(self, it):
+        try:
+            if it["category"] == "saves":
+                util.open_path(it["path"])
+            else:
+                util.open_path(os.path.dirname(it["path"]))
+        except Exception as e:
+            messagebox.showerror("MC Lite", str(e), parent=self)
+
+    def _local_import_dialog(self):
+        cat = self.local_tab if self.local_tab in localcontent.FILE_CATEGORIES else "auto"
+        paths = filedialog.askopenfilenames(
+            title=t("local.import_title"),
+            filetypes=[(t("local.import_ft"), "*.jar *.zip"), ("All files", "*.*")])
+        if not paths:
+            return
+        self._run_import(list(paths), cat)
+
+    def _run_import(self, paths, cat):
+        win = tk.Toplevel(self)
+        win.title(t("local.importing"))
+        win.configure(bg=BG)
+        win.geometry("540x210")
+        win.transient(self)
+        tk.Label(win, text=t("local.importing"), bg=BG, fg=TXT, font=F(12, True),
+                 anchor="w").pack(fill="x", padx=24, pady=(20, 4))
+        state = tk.Label(win, text="…", bg=BG, fg=SUB, font=F(9), anchor="w",
+                         wraplength=480, justify="left")
+        state.pack(fill="x", padx=24)
+        bar = ProgressBar(win, height=10)
+        bar.pack(fill="x", padx=24, pady=14)
+        bar.set(0.2)
+
+        def cb(s):
+            self.after(0, lambda: state.config(text=s))
+
+        def done(res):
+            bar.set(1.0)
+            ok = sum(1 for r in res if not r["skipped"])
+            skip = len(res) - ok
+            warns = [r["warning"] for r in res if r.get("warning")]
+            state.config(text=t("local.import_done") % (ok, skip), fg=ACC)
+            self._populate_local_rows()
+            win.after(600, win.destroy)
+            if warns:
+                messagebox.showwarning(t("local.import_warn_title"), "\n".join(warns), parent=self)
+
+        def fail(err):
+            bar.set(0)
+            state.config(text=t("local.import_fail") % err, fg=DANGER)
+
+        def work():
+            try:
+                res = localcontent.import_files(self.local_game_dir, cat, paths, status=cb)
+                self.after(0, lambda: done(res))
+            except Exception as e:
+                self.after(0, lambda: fail(str(e)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    # ------------------------------------------------------------ 拖放（Win32 WM_DROPFILES）
+    def _install_drag_drop(self):
+        if self._dnd_installed:
+            return
+        try:
+            hwnd = self.winfo_id()
+            self._dnd_handle = localcontent.install_drop_target(hwnd, self._handle_dropped_files)
+            self._dnd_installed = True
+        except Exception:
+            self._dnd_installed = False
+
+    def _handle_dropped_files(self, paths):
+        paths = [p for p in (paths or []) if p and os.path.isfile(p)]
+        if not paths:
+            return
+        self.local_game_dir = self.current_inst()["game_dir"]
+        cat = "auto"
+        if getattr(self, "page", "") == "content" and getattr(self, "content_type", "") == "local":
+            if self.local_tab in localcontent.FILE_CATEGORIES:
+                cat = self.local_tab
+        self.set_status(t("local.drag_received") % len(paths))
+        self._run_import(paths, cat)
 
     def _render_pack_meta(self, parent, hit):
         """整合包详情页：异步下载 .mrpack 本体解析 MC/加载器/文件数/大小。"""
@@ -2979,7 +3258,7 @@ class App(tk.Tk):
 
         # 关于
         box = section(t("settings.about"))
-        tk.Label(box, text="MC Lite 正式版 v1.5.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
+        tk.Label(box, text="MC Lite 正式版 v1.6.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
                  font=F(10, True), anchor="w").pack(anchor="w")
         tk.Label(box, text=t("settings.about.text"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", pady=(4, 0))
 
