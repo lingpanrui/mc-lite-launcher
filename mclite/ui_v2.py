@@ -15,7 +15,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 from . import i18n, imgcache, modrinth, poll, util
-from . import doctor, instances
+from . import doctor, instances, accounts, forge, quilt
 from . import theme
 from .i18n import t
 
@@ -41,6 +41,7 @@ NAV = [
     ("home", "◆"),
     ("versions", "▣"),
     ("instances", "❖"),
+    ("accounts", "☺"),
     ("content", "◈"),
     ("online", "◉"),
     ("poll", "★"),
@@ -256,6 +257,16 @@ class Select(tk.Menubutton):
         self._sync_text()
         if self.on_change:
             self.on_change(v)
+
+    def set_values(self, values, value=None):
+        """异步刷新下拉选项（保留当前 on_change/labels）。"""
+        self.values = list(values)
+        self.menu.delete(0, "end")
+        for v in self.values:
+            self.menu.add_command(label=self.labels(v), command=lambda v=v: self.set(v))
+        if value is not None:
+            self.value = value
+        self._sync_text()
 
 
 class NavButton(tk.Frame):
@@ -484,6 +495,7 @@ class App(tk.Tk):
             "home": self._page_home,
             "versions": self._page_versions,
             "instances": self._page_instances,
+            "accounts": self._page_accounts,
             "content": self._page_content,
             "online": self._page_online,
             "poll": self._page_poll,
@@ -514,7 +526,10 @@ class App(tk.Tk):
                 p = os.path.join(vdir, name, name + ".json")
                 if os.path.isfile(p):
                     meta = util.read_json(p, {}) or {}
-                    out.append((name, meta.get("type") or "release", meta.get("__loader") or ""))
+                    ld = forge.detect_loader(meta)
+                    if ld == "vanilla":
+                        ld = ""
+                    out.append((name, meta.get("type") or "release", ld))
         except Exception:
             pass
         return out
@@ -658,6 +673,20 @@ class App(tk.Tk):
                 height = int(inst.get("height") or cfg.get("height") or 480)
                 extra_jvm = parse_jvm_args(inst.get("jvm_args") or cfg.get("jvm_args") or "")
 
+                # 账户：用当前账户组装 auth；外置账户额外拼 -javaagent 注入参数
+                acc = accounts.current(cfg)
+                auth = accounts.launch_auth(acc)
+                if acc.get("mode") == accounts.MODE_AUTHLIB:
+                    try:
+                        self.after(0, lambda: self.set_status(t("acc.authlib.inject")))
+                        jar = accounts.ensure_authlib_jar(
+                            status=lambda s: self.after(0, lambda s=s: self.set_status(s)))
+                        agent = accounts.javaagent_arg(acc, jar)
+                        if agent:
+                            extra_jvm.insert(0, agent)
+                    except Exception as e:
+                        self.after(0, lambda m=str(e): self.set_status("authlib-injector: " + m))
+
                 # 1) 启动前体检 + 自动补齐
                 if auto:
                     self.after(0, lambda: self.set_status(t("launch.checking")))
@@ -675,10 +704,10 @@ class App(tk.Tk):
                         msg = str(e)
                         self.after(0, lambda m=msg: self.set_status(t("launch.repairfail") % m))
 
-                # 2) 组装命令并启动（内存/宽高/额外 JVM 参数均来自当前实例）
+                # 2) 组装命令并启动（内存/宽高/额外 JVM/账户均来自当前实例与当前账户）
                 cmd, _vj, _root, _missing = mojang.build_command(
-                    self.game_dir, vid, exe, cfg.get("username") or "Steve",
-                    memory, width, height, extra_jvm=extra_jvm)
+                    self.game_dir, vid, exe, auth.get("name") or cfg.get("username") or "Steve",
+                    memory, width, height, extra_jvm=extra_jvm, auth=auth)
                 lines = []
                 proc = mojang.launch(cmd, self.game_dir, on_output=lines.append)
                 # 记录最后启动版本到当前实例（供导出导入提示）
@@ -1247,6 +1276,385 @@ class App(tk.Tk):
 
         threading.Thread(target=work, daemon=True).start()
 
+    # ------------------------------------------------------------ 账户
+    def _page_accounts(self):
+        area = ScrollArea(self.page_host, bg=BG)
+        area.pack(fill="both", expand=True)
+        self._acc_area = area
+        p = area.inner
+        cur = accounts.current(self.cfg)
+
+        def card(title):
+            tk.Label(p, text=title, bg=BG, fg=DIM, font=F(8, True), anchor="w").pack(
+                anchor="w", pady=(4, 6))
+            c = tk.Frame(p, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+            c.pack(fill="x", pady=(0, 14))
+            inner = tk.Frame(c, bg=CARD)
+            inner.pack(fill="x", padx=16, pady=14)
+            return inner
+
+        def entry(parent, var, width=24, show=None):
+            e = tk.Entry(parent, textvariable=var, bg=CARD2, fg=TXT, insertbackground=TXT,
+                         relief="flat", bd=0, highlightthickness=1, highlightbackground=LINE,
+                         highlightcolor=ACC, font=F(10), width=width, show=show or "")
+            e.pack(side="left", ipady=5, fill="x", expand=True)
+            return e
+
+        def mode_text(mode):
+            return t("acc.mode." + mode) if mode in ("offline", "authlib", "msa") else mode
+
+        def mode_glyph(mode):
+            return {"offline": "☺", "authlib": "◉", "msa": "⊞"}.get(mode, "☺")
+
+        # ---- 当前账户
+        box = card(t("acc.current.label"))
+        top = tk.Frame(box, bg=CARD)
+        top.pack(fill="x")
+        tk.Label(top, text=mode_glyph(cur.get("mode")), bg=CARD2, fg=ACC, font=F(16, True),
+                 width=3, pady=8).pack(side="left", padx=(0, 12))
+        info = tk.Frame(top, bg=CARD)
+        info.pack(side="left", fill="x", expand=True)
+        line1 = tk.Frame(info, bg=CARD)
+        line1.pack(fill="x")
+        tk.Label(line1, text=cur.get("name") or "?", bg=CARD, fg=TXT, font=F(13, True),
+                 anchor="w").pack(side="left")
+        tk.Label(line1, text=mode_text(cur.get("mode")), bg=CARD2, fg=ACC, font=F(8, True),
+                 padx=8, pady=2).pack(side="left", padx=(10, 0))
+        sub = cur.get("uuid") or ""
+        if cur.get("mode") == "authlib" and cur.get("api"):
+            sub = "%s   ·   %s" % (cur.get("api"), cur.get("uuid") or "")
+        tk.Label(info, text=sub, bg=CARD, fg=SUB, font=F(8), anchor="w").pack(anchor="w", pady=(4, 0))
+
+        # ---- 账户列表
+        box = card(t("acc.list.title"))
+        head = tk.Frame(box, bg=CARD)
+        head.pack(fill="x", pady=(0, 8))
+        Btn(head, t("acc.offline.add"), self._acc_add_dialog, kind="primary",
+            padx=14, pady=5, size=9).pack(side="right")
+        accs = accounts.list_accounts(self.cfg)
+        if not accs:
+            tk.Label(box, text=t("acc.empty"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w")
+        for acc in accs:
+            row = tk.Frame(box, bg=CARD2, highlightbackground=LINE, highlightthickness=1)
+            row.pack(fill="x", pady=(0, 8))
+            rb = tk.Frame(row, bg=CARD2)
+            rb.pack(fill="x", padx=12, pady=9)
+            tk.Label(rb, text=mode_glyph(acc.get("mode")), bg=CARD2, fg=ACC, font=F(12),
+                     width=2).pack(side="left")
+            mid = tk.Frame(rb, bg=CARD2)
+            mid.pack(side="left", fill="x", expand=True)
+            l1 = tk.Frame(mid, bg=CARD2)
+            l1.pack(fill="x")
+            tk.Label(l1, text=acc.get("name") or "?", bg=CARD2, fg=TXT, font=F(10, True),
+                     anchor="w").pack(side="left")
+            tk.Label(l1, text=mode_text(acc.get("mode")), bg=CARD2, fg=SUB, font=F(8),
+                     padx=6).pack(side="left", padx=(8, 0))
+            if acc["id"] == cur["id"]:
+                tk.Label(l1, text="● " + t("acc.current.label"), bg=CARD2, fg=ACC, font=F(8, True),
+                         padx=6).pack(side="left")
+            if acc.get("api"):
+                tk.Label(mid, text=acc.get("api"), bg=CARD2, fg=DIM, font=F(8), anchor="w").pack(
+                    anchor="w", pady=(2, 0))
+            if acc["id"] != cur["id"]:
+                Btn(rb, t("acc.set_current"), lambda a=acc["id"]: self._acc_set_current(a),
+                    kind="ghost", padx=12, pady=5, size=8).pack(side="right", padx=(6, 0))
+            if acc.get("mode") == "offline":
+                Btn(rb, t("acc.rename"), lambda a=acc: self._acc_rename_dialog(a),
+                    kind="quiet", padx=10, pady=5, size=8).pack(side="right", padx=(6, 0))
+            Btn(rb, t("acc.delete"), lambda a=acc: self._acc_delete(a),
+                kind="danger", padx=10, pady=5, size=8).pack(side="right")
+
+        # ---- 外置登录
+        box = card(t("acc.online.title"))
+        api_var = tk.StringVar(value=self.cfg.get("authlib_api") or "https://littleskin.cn/api/yggdrasil")
+        r1 = tk.Frame(box, bg=CARD); r1.pack(fill="x", pady=4)
+        tk.Label(r1, text=t("acc.authlib.api"), bg=CARD, fg=SUB, font=F(9), width=12, anchor="w").pack(side="left")
+        entry(r1, api_var, 30)
+        test_btn = Btn(r1, t("acc.test"), lambda: None, kind="ghost", padx=12, pady=5, size=9)
+        test_btn.pack(side="left", padx=(8, 0))
+        test_state = tk.Label(box, text="", bg=CARD, fg=SUB, font=F(8), anchor="w", wraplength=640, justify="left")
+        test_state.pack(anchor="w", pady=(2, 4))
+
+        user_var = tk.StringVar(value="")
+        pass_var = tk.StringVar(value="")
+        r2 = tk.Frame(box, bg=CARD); r2.pack(fill="x", pady=4)
+        tk.Label(r2, text=t("acc.authlib.user"), bg=CARD, fg=SUB, font=F(9), width=12, anchor="w").pack(side="left")
+        entry(r2, user_var, 24)
+        r3 = tk.Frame(box, bg=CARD); r3.pack(fill="x", pady=4)
+        tk.Label(r3, text=t("acc.authlib.pass"), bg=CARD, fg=SUB, font=F(9), width=12, anchor="w").pack(side="left")
+        entry(r3, pass_var, 24, show="*")
+        r4 = tk.Frame(box, bg=CARD); r4.pack(fill="x", pady=(8, 0))
+        login_btn = Btn(r4, t("acc.login"), lambda: None, kind="primary", padx=18, pady=6, size=9)
+        login_btn.pack(side="left")
+        tk.Label(box, text=t("acc.authlib.note"), bg=CARD, fg=DIM, font=F(8), anchor="w",
+                 wraplength=660, justify="left").pack(anchor="w", pady=(10, 0))
+        tk.Label(box, text=t("acc.authlib.inject"), bg=CARD, fg=DIM, font=F(8), anchor="w",
+                 wraplength=660, justify="left").pack(anchor="w", pady=(4, 0))
+
+        def do_test():
+            test_btn.disable(t("acc.testing"))
+            test_state.config(text=t("acc.testing"), fg=SUB)
+
+            def work():
+                try:
+                    name = accounts.test_api(api_var.get())
+                    msg = t("acc.test.ok") % name
+                    color = ACC
+                except Exception as e:
+                    msg = t("acc.test.fail") % str(e)
+                    color = DANGER
+
+                def done():
+                    try:
+                        test_state.config(text=msg, fg=color)
+                        test_btn.set_kind("ghost")
+                        test_btn.config(text=t("acc.test"))
+                        test_btn.command = do_test
+                    except Exception:
+                        pass
+                self.after(0, done)
+
+            threading.Thread(target=work, daemon=True).start()
+
+        test_btn.command = do_test
+
+        def do_login():
+            api = api_var.get().strip()
+            user = user_var.get().strip()
+            pwd = pass_var.get()
+            if not api or not user or not pwd:
+                test_state.config(text=t("acc.authlib.user") + " / " + t("acc.authlib.pass"), fg=WARN)
+                return
+            login_btn.disable(t("acc.logging"))
+            test_state.config(text=t("acc.logging"), fg=SUB)
+
+            def work():
+                try:
+                    acc = accounts.login_authlib(self.cfg, api, user, pwd,
+                                                 status=lambda s: self.after(0, lambda: self.set_status(s)))
+                    msg = t("acc.authlib.success") % (acc.get("name"), acc.get("api"))
+                    self.after(0, lambda: self.set_status(msg))
+                    self.after(0, lambda: self.show_page("accounts"))
+                except Exception as e:
+                    err = str(e)
+                    self.after(0, lambda: self._acc_login_fail(login_btn, err, test_state))
+
+            threading.Thread(target=work, daemon=True).start()
+
+        login_btn.command = do_login
+        login_btn._do_login = do_login
+
+        # ---- 微软正版
+        box = card(t("acc.msa.title"))
+        msa_var = tk.StringVar(value=self.cfg.get("msa_client_id") or "")
+        r = tk.Frame(box, bg=CARD); r.pack(fill="x", pady=4)
+        tk.Label(r, text=t("acc.msa.clientid"), bg=CARD, fg=SUB, font=F(9), width=14, anchor="w").pack(side="left")
+        entry(r, msa_var, 34)
+        Btn(r, t("acc.msa.save"), lambda: self._acc_msa_save(msa_var), kind="ghost",
+            padx=12, pady=5, size=9).pack(side="left", padx=(8, 0))
+
+        cid = (self.cfg.get("msa_client_id") or "").strip()
+        if not cid:
+            tk.Label(box, text=t("acc.msa.disabled"), bg=CARD, fg=WARN, font=F(8), anchor="w",
+                     wraplength=660, justify="left").pack(anchor="w", pady=(8, 0))
+        tk.Label(box, text=t("acc.msa.howto"), bg=CARD, fg=SUB, font=F(8), anchor="w",
+                 wraplength=660, justify="left").pack(anchor="w", pady=(8, 0))
+        Btn(box, t("acc.msa.howto.link"), self._acc_open_docs, kind="quiet",
+            padx=12, pady=5, size=8).pack(anchor="w", pady=(6, 0))
+
+        code_state = tk.Label(box, text="", bg=CARD2, fg=ACC, font=F(9, True), anchor="w",
+                              wraplength=660, justify="left", padx=12, pady=10)
+        code_state.pack(fill="x", pady=(10, 0))
+        code_row = tk.Frame(box, bg=CARD)
+        code_row.pack(fill="x", pady=(8, 0))
+        copy_btn = Btn(code_row, t("acc.msa.copy"), lambda: None, kind="ghost",
+                       padx=12, pady=5, size=9)
+        copy_btn.pack(side="left")
+        copy_btn.disable(t("acc.msa.copy"))
+        self._msa_code = ""
+
+        msa_btn = Btn(code_row, t("acc.msa.login"), lambda: None, kind="primary",
+                     padx=18, pady=6, size=9)
+        msa_btn.pack(side="left", padx=(8, 0))
+        if not cid:
+            msa_btn.disable(t("acc.msa.login"))
+
+        def do_msa():
+            cid_now = msa_var.get().strip()
+            if not cid_now:
+                code_state.config(text=t("acc.msa.needid"), fg=WARN)
+                return
+            self.cfg["msa_client_id"] = cid_now
+            util.save_config(self.cfg)
+            msa_btn.disable(t("acc.msa.logging"))
+            code_state.config(text=t("acc.msa.logging"), fg=SUB)
+            self._msa_code = ""
+
+            def on_code(code, uri):
+                self._msa_code = code or ""
+                msg = t("acc.msa.code") % (uri or "https://www.microsoft.com/link", code or "")
+
+                def show():
+                    try:
+                        code_state.config(text=msg, fg=ACC)
+                        copy_btn.set_kind("ghost")
+                        copy_btn.config(text=t("acc.msa.copy"))
+                        copy_btn.command = lambda: self._copy_msa_code()
+                    except Exception:
+                        pass
+                self.after(0, show)
+
+            def work():
+                try:
+                    acc = accounts.login_msa(self.cfg, cid_now, status=lambda s: self.after(0, lambda: self.set_status(s)),
+                                             on_code=on_code)
+                    self.after(0, lambda: self.set_status(t("acc.authlib.success") % (acc.get("name"), "Microsoft")))
+                    self.after(0, lambda: self.show_page("accounts"))
+                except Exception as e:
+                    err = str(e)
+                    self.after(0, lambda: self._acc_msa_fail(msa_btn, code_state, err))
+
+            threading.Thread(target=work, daemon=True).start()
+
+        msa_btn.command = do_msa
+        msa_btn._do_msa = do_msa
+
+    def _copy_msa_code(self):
+        if self._msa_code:
+            self.clipboard_clear()
+            self.clipboard_append(self._msa_code)
+            self.set_status(t("acc.msa.copied"))
+
+    def _acc_login_fail(self, btn, err, state):
+        try:
+            btn.set_kind("primary")
+            btn.config(text=t("acc.login"))
+            btn.command = getattr(btn, "_do_login", None)
+        except Exception:
+            pass
+        try:
+            state.config(text=t("acc.msa.failed") % err, fg=DANGER)
+        except Exception:
+            pass
+        messagebox.showerror(t("common.v2badge"), err)
+
+    def _acc_msa_fail(self, btn, state, err):
+        try:
+            btn.set_kind("primary")
+            btn.config(text=t("acc.msa.login"))
+            btn.command = getattr(btn, "_do_msa", None)
+        except Exception:
+            pass
+        try:
+            state.config(text=t("acc.msa.failed") % err, fg=DANGER)
+        except Exception:
+            pass
+        messagebox.showerror(t("common.v2badge"), err)
+
+    def _acc_open_docs(self):
+        util.open_path("https://learn.microsoft.com/entra/identity-platform/v2-oauth2-device-code")
+
+    def _acc_msa_save(self, var):
+        cid = var.get().strip()
+        self.cfg["msa_client_id"] = cid
+        util.save_config(self.cfg)
+        self.set_status(t("acc.msa.saved"))
+        self.show_page("accounts")
+
+    def _acc_set_current(self, aid):
+        try:
+            acc = accounts.set_current(self.cfg, aid)
+        except Exception as e:
+            messagebox.showerror(t("common.v2badge"), str(e))
+            return
+        self.set_status(t("acc.switch.done") % acc.get("name"))
+        self.show_page("accounts")
+
+    def _acc_delete(self, acc):
+        if not messagebox.askyesno(t("acc.delete"), t("acc.delete.confirm") % acc.get("name")):
+            return
+        try:
+            accounts.delete(self.cfg, acc["id"])
+        except Exception as e:
+            messagebox.showerror(t("common.v2badge"), str(e))
+            return
+        self.set_status(t("acc.deleted"))
+        self.show_page("accounts")
+
+    def _acc_add_dialog(self):
+        win = tk.Toplevel(self)
+        win.title(t("acc.offline.title"))
+        win.configure(bg=BG)
+        win.geometry("460x210")
+        win.transient(self)
+        win.resizable(False, False)
+        tk.Label(win, text=t("acc.offline.title"), bg=BG, fg=TXT, font=F(15, True),
+                 anchor="w").pack(fill="x", padx=24, pady=(20, 4))
+        tk.Label(win, text=t("acc.offline.name"), bg=BG, fg=SUB, font=F(9),
+                 anchor="w").pack(fill="x", padx=24)
+        var = tk.StringVar(value="")
+        e = tk.Entry(win, textvariable=var, bg=CARD2, fg=TXT, insertbackground=TXT, relief="flat",
+                     bd=0, highlightthickness=1, highlightbackground=LINE, highlightcolor=ACC, font=F(11))
+        e.pack(fill="x", padx=24, ipady=6, pady=(8, 0))
+        state = tk.Label(win, text="", bg=BG, fg=DANGER, font=F(9), anchor="w")
+        state.pack(fill="x", padx=24, pady=(8, 0))
+
+        def ok():
+            name = var.get().strip()
+            if not re.fullmatch(r"[A-Za-z0-9_]{3,16}", name):
+                state.config(text=t("acc.offline.badname"))
+                return
+            try:
+                acc = accounts.add_offline(self.cfg, name)
+            except Exception as ex:
+                state.config(text=str(ex))
+                return
+            win.destroy()
+            self.set_status(t("acc.added") % acc.get("name"))
+            self.show_page("accounts")
+
+        foot = tk.Frame(win, bg=BG)
+        foot.pack(side="bottom", fill="x", padx=24, pady=16)
+        Btn(foot, t("common.close"), win.destroy, kind="quiet", padx=16, pady=7, size=9).pack(side="right")
+        Btn(foot, t("acc.offline.add"), ok, kind="primary", padx=18, pady=7, size=10).pack(side="right", padx=(0, 8))
+        e.focus_set()
+        win.bind("<Return>", lambda ev: ok())
+
+    def _acc_rename_dialog(self, acc):
+        win = tk.Toplevel(self)
+        win.title(t("acc.rename.title"))
+        win.configure(bg=BG)
+        win.geometry("420x190")
+        win.transient(self)
+        win.resizable(False, False)
+        tk.Label(win, text=t("acc.rename.title"), bg=BG, fg=TXT, font=F(14, True),
+                 anchor="w").pack(fill="x", padx=22, pady=(20, 10))
+        var = tk.StringVar(value=acc.get("name") or "")
+        e = tk.Entry(win, textvariable=var, bg=CARD2, fg=TXT, insertbackground=TXT, relief="flat",
+                     bd=0, highlightthickness=1, highlightbackground=LINE, highlightcolor=ACC, font=F(10))
+        e.pack(fill="x", padx=22, ipady=6)
+        e.focus_set()
+
+        def ok():
+            name = var.get().strip()
+            if not re.fullmatch(r"[A-Za-z0-9_]{3,16}", name):
+                messagebox.showerror(t("common.v2badge"), t("acc.offline.badname"))
+                return
+            try:
+                accounts.rename_offline(self.cfg, acc["id"], name)
+            except Exception as ex:
+                messagebox.showerror(t("common.v2badge"), str(ex))
+                return
+            win.destroy()
+            self.set_status(t("acc.renamed"))
+            self.show_page("accounts")
+
+        foot = tk.Frame(win, bg=BG)
+        foot.pack(fill="x", padx=22, pady=16)
+        Btn(foot, t("common.close"), win.destroy, kind="quiet", padx=14, pady=6, size=9).pack(side="right")
+        Btn(foot, t("common.save"), ok, kind="primary", padx=16, pady=6, size=9).pack(side="right", padx=(0, 8))
+        win.bind("<Return>", lambda ev: ok())
+
     # ------------------------------------------------------------ 安装新版本
     def open_install(self):
         """安装新版本向导：选游戏版本 + 加载器，带进度条。"""
@@ -1255,17 +1663,18 @@ class App(tk.Tk):
         win = tk.Toplevel(self)
         win.title(t("versions.install.title"))
         win.configure(bg=BG)
-        win.geometry("560x400")
+        win.geometry("680x660")
+        win.minsize(620, 560)
         win.transient(self)
-        win.resizable(False, False)
 
         tk.Label(win, text=t("versions.install.title"), bg=BG, fg=TXT, font=F(16, True),
                  anchor="w").pack(fill="x", padx=24, pady=(22, 4))
         tk.Label(win, text=t("versions.install.sub"), bg=BG, fg=SUB, font=F(9),
-                 anchor="w", wraplength=480, justify="left").pack(fill="x", padx=24)
+                 anchor="w", wraplength=600, justify="left").pack(fill="x", padx=24)
 
         body = tk.Frame(win, bg=BG)
-        body.pack(fill="x", padx=24, pady=(16, 0))
+        body.pack(fill="x", padx=24, pady=(14, 0))
+        body.columnconfigure(1, weight=1)
 
         mc_vals = []
         try:
@@ -1283,15 +1692,133 @@ class App(tk.Tk):
 
         tk.Label(body, text=t("versions.loader"), bg=BG, fg=SUB, font=F(9),
                  anchor="w").grid(row=1, column=0, sticky="w", pady=6)
-        loader_sel = Select(
-            body, ["vanilla", "fabric"], "vanilla", width=24,
-            labels=lambda v: t("versions.install.vanilla") if v == "vanilla" else "Fabric")
+
+        def loader_label(v):
+            return {"vanilla": t("versions.install.vanilla"), "fabric": "Fabric",
+                    "forge": "Forge", "neoforge": "NeoForge", "quilt": "Quilt"}.get(v, v)
+
+        loader_sel = Select(body, ["vanilla", "fabric", "forge", "neoforge", "quilt"],
+                            "vanilla", width=24, labels=loader_label)
         loader_sel.grid(row=1, column=1, sticky="w", padx=(16, 0), pady=6)
 
+        # 加载器专属选项（版本下拉 / 测试版 / 本地 installer），随加载器切换重建
+        opts_host = tk.Frame(body, bg=BG)
+        opts_host.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        opts = {"ver_var": tk.StringVar(value=""), "local_jar": "",
+                "beta": tk.BooleanVar(value=False), "ver_sel": None, "local_label": None}
+
+        def opt_row(parent, label, width=14):
+            r = tk.Frame(parent, bg=BG)
+            r.pack(fill="x", pady=4)
+            tk.Label(r, text=label, bg=BG, fg=SUB, font=F(9), width=width, anchor="w").pack(side="left")
+            return r
+
+        def load_loader_versions():
+            ld = loader_sel.value
+            mc = mc_sel.value
+            if ld not in ("forge", "neoforge", "quilt") or not mc or mc == "—":
+                return
+            ver_sel = opts.get("ver_sel")
+            if ver_sel is None:
+                return
+            ver_sel.set_values([t("versions.install.loadingvers")], t("versions.install.loadingvers"))
+
+            def work():
+                vals = []
+                err = None
+                try:
+                    if ld == "forge":
+                        vals = forge.list_forge(mc)
+                    elif ld == "neoforge":
+                        vals = forge.list_neoforge(mc)
+                    else:
+                        vals = quilt.list_loaders(mc, include_beta=opts["beta"].get())
+                except Exception as e:
+                    err = str(e)
+
+                def done():
+                    try:
+                        if err:
+                            ver_sel.set_values([], "")
+                            opts["ver_var"].set("")
+                            return
+                        ver_sel.set_values(vals, vals[0] if vals else "")
+                        if vals:
+                            opts["ver_var"].set(vals[0])
+                    except Exception:
+                        pass
+                self.after(0, done)
+
+            threading.Thread(target=work, daemon=True).start()
+
+        def rebuild_opts():
+            for w in opts_host.winfo_children():
+                w.destroy()
+            opts["ver_sel"] = None
+            opts["local_label"] = None
+            ld = loader_sel.value
+
+            if ld == "vanilla":
+                tk.Label(opts_host, text=t("versions.install.vanilla.hint"), bg=BG, fg=DIM,
+                         font=F(8), anchor="w", wraplength=580, justify="left").pack(anchor="w", pady=4)
+                return
+            if ld == "fabric":
+                tk.Label(opts_host, text=t("versions.install.fabric.hint"), bg=BG, fg=DIM,
+                         font=F(8), anchor="w", wraplength=580, justify="left").pack(anchor="w", pady=4)
+                return
+
+            # forge / neoforge / quilt：版本选择
+            r = opt_row(opts_host, t("versions.install.loaderver"))
+            ver_entry = tk.Entry(r, textvariable=opts["ver_var"], bg=CARD2, fg=TXT, insertbackground=TXT,
+                                 relief="flat", bd=0, highlightthickness=1, highlightbackground=LINE,
+                                 highlightcolor=ACC, font=F(10), width=18)
+            ver_entry.pack(side="left", ipady=5, padx=(0, 8))
+            ver_sel = Select(r, ["…"], "…", width=20,
+                             labels=lambda v: v, on_change=lambda v: opts["ver_var"].set(v))
+            ver_sel.pack(side="left")
+            opts["ver_sel"] = ver_sel
+            Btn(r, t("versions.install.refresh"), load_loader_versions, kind="quiet",
+                padx=10, pady=5, size=8).pack(side="left", padx=(8, 0))
+
+            if ld == "quilt":
+                br = tk.Frame(opts_host, bg=BG)
+                br.pack(fill="x", pady=(6, 0))
+                tk.Checkbutton(br, text=t("versions.install.beta"), variable=opts["beta"], bg=BG, fg=TXT,
+                               selectcolor=CARD2, activebackground=BG, activeforeground=TXT, font=F(9),
+                               bd=0, highlightthickness=0,
+                               command=load_loader_versions).pack(side="left")
+                tk.Label(opts_host, text=t("versions.install.quilt.hint"), bg=BG, fg=DIM, font=F(8),
+                         anchor="w", wraplength=580, justify="left").pack(anchor="w", pady=(6, 0))
+            else:
+                # forge / neoforge：本地 installer 兜底
+                lr = opt_row(opts_host, "")
+                Btn(lr, t("versions.install.localjar"), lambda: self._pick_local_installer(opts),
+                    kind="ghost", padx=12, pady=5, size=8).pack(side="left")
+                lab = tk.Label(lr, text="", bg=BG, fg=SUB, font=F(8), anchor="w", wraplength=420, justify="left")
+                lab.pack(side="left", padx=(10, 0), fill="x", expand=True)
+                opts["local_label"] = lab
+                if ld == "neoforge":
+                    tk.Label(opts_host, text=t("versions.install.neo.warn"), bg=BG, fg=WARN, font=F(8),
+                             anchor="w", wraplength=580, justify="left").pack(anchor="w", pady=(6, 0))
+                    tk.Label(opts_host, text=t("versions.install.neo.hint"), bg=BG, fg=DIM, font=F(8),
+                             anchor="w", wraplength=580, justify="left").pack(anchor="w", pady=(4, 0))
+                else:
+                    tk.Label(opts_host, text=t("versions.install.forge.hint"), bg=BG, fg=DIM, font=F(8),
+                             anchor="w", wraplength=580, justify="left").pack(anchor="w", pady=(6, 0))
+
+            load_loader_versions()
+
+        def on_mc_change(_v=None):
+            rebuild_opts()
+
+        mc_sel.on_change = on_mc_change
+        loader_sel.on_change = lambda v: rebuild_opts()
+        rebuild_opts()
+
         bar = ProgressBar(win, height=10)
-        bar.pack(fill="x", padx=24, pady=(20, 8))
+        bar.pack(fill="x", padx=24, pady=(18, 8))
         state = tk.Label(win, text=t("versions.install.note"), bg=BG, fg=DIM, font=F(9),
-                         anchor="w", wraplength=480, justify="left")
+                         anchor="w", wraplength=600, justify="left")
         state.pack(fill="x", padx=24)
 
         row = tk.Frame(win, bg=BG)
@@ -1305,11 +1832,30 @@ class App(tk.Tk):
             go.config(text=t("versions.install.start"))
             go.command = start
 
+        def mc_required_major(mc):
+            m = re.match(r"1\.(\d+)(?:\.(\d+))?", str(mc))
+            if not m:
+                return 17
+            minor, patch = int(m.group(1)), int(m.group(2) or 0)
+            if minor <= 16:
+                return 8
+            if minor == 17:
+                return 17
+            if minor <= 20:
+                return 17 if not (minor == 20 and patch >= 5) else 21
+            return 21
+
         def start():
             if busy["on"]:
                 return
             vid = mc_sel.value
+            ld = loader_sel.value
             if not vid or vid == "—":
+                return
+            lv = (opts["ver_var"].get().strip() or None)
+            local_jar = opts.get("local_jar") or None
+            if ld in ("forge", "neoforge") and not lv and not local_jar:
+                state.config(text=t("versions.install.loaderver"), fg=WARN)
                 return
             busy["on"] = True
             go.disable(t("versions.install.busy"))
@@ -1324,9 +1870,22 @@ class App(tk.Tk):
             def work():
                 try:
                     mm = mojang.manifest_map(mojang.get_manifest())
-                    if loader_sel.value == "fabric":
+                    if ld == "fabric":
                         out = mojang.install_fabric(self.game_dir, vid, status=on_status,
                                                     progress=on_progress, manifest=mm)
+                    elif ld == "quilt":
+                        out = quilt.install_quilt(self.game_dir, vid, loader_version=lv,
+                                                  include_beta=opts["beta"].get(),
+                                                  status=on_status, progress=on_progress, manifest=mm)
+                    elif ld in ("forge", "neoforge"):
+                        from . import java as jm
+                        javas = jm.find_javas()
+                        exe = jm.pick_java(mc_required_major(vid), all_javas=javas)
+                        if not exe:
+                            raise RuntimeError(t("versions.install.needjava"))
+                        out = forge.install_loader(self.game_dir, vid, ld, lv or "", exe,
+                                                   status=on_status, progress=on_progress,
+                                                   local_jar=local_jar)
                     else:
                         out = mojang.Installer(self.game_dir, mm, status=on_status,
                                                progress=on_progress).install(vid)[0]
@@ -1354,6 +1913,18 @@ class App(tk.Tk):
         go = Btn(row, t("versions.install.start"), start, kind="primary",
                  padx=18, pady=7, size=10)
         go.pack(side="right", padx=(0, 8))
+
+    def _pick_local_installer(self, opts):
+        p = filedialog.askopenfilename(title=t("versions.install.localjar.pick"),
+                                      filetypes=[("installer jar", "*.jar"), ("所有文件", "*.*")])
+        if p:
+            opts["local_jar"] = p
+            lab = opts.get("local_label")
+            if lab is not None:
+                try:
+                    lab.config(text=t("versions.install.localjar.set") % os.path.basename(p), fg=ACC)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------ 内容（PCL2 风格）
     def _page_content(self):
@@ -1957,7 +2528,7 @@ class App(tk.Tk):
 
         # 关于
         box = section(t("settings.about"))
-        tk.Label(box, text="MC Lite 正式版 v1.3.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
+        tk.Label(box, text="MC Lite 正式版 v1.4.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
                  font=F(10, True), anchor="w").pack(anchor="w")
         tk.Label(box, text=t("settings.about.text"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", pady=(4, 0))
 

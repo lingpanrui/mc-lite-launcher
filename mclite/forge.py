@@ -143,12 +143,21 @@ def _find_new_version(game_dir, mc_version, started, loader):
     return best
 
 
-def install_loader(game_dir, mc_version, loader, loader_version, java_exe, status=None, progress=None):
-    """运行官方安装器，返回安装出的版本 id"""
+def install_loader(game_dir, mc_version, loader, loader_version, java_exe, status=None,
+                   progress=None, local_jar=None):
+    """运行官方安装器，返回安装出的版本 id。
+
+    local_jar 非空时直接使用用户手动下载的 installer.jar（三级兜底的最后一级），
+    不再走官方/BMCL 下载。
+    """
     status = status or (lambda s: None)
     progress = progress or (lambda f: None)
     _ensure_launcher_profiles(game_dir)
-    jar = _download_installer(loader, mc_version, loader_version, status)
+    if local_jar and os.path.isfile(local_jar):
+        jar = local_jar
+        status("使用本地安装器：%s" % jar)
+    else:
+        jar = _download_installer(loader, mc_version, loader_version, status)
     progress(0.25)
 
     status("运行 %s 安装器（会下载依赖库，可能需要几分钟）" % loader.capitalize())

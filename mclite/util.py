@@ -38,6 +38,9 @@ DEFAULT_CONFIG = {
     "current_instance": "default",
     "instance_root": os.path.join(app_root(), "instances"),
     "jvm_args": "",
+    # v1.4.0 账户系统（离线 / 外置 / 微软）
+    "accounts": [],
+    "current_account": "",
 }
 
 
