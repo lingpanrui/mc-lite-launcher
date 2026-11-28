@@ -33,6 +33,11 @@ DEFAULT_CONFIG = {
     "close_after_launch": True,
     "authlib_api": "https://littleskin.cn/api/yggdrasil",
     "msa_client_id": "",
+    # v1.3.0 实例系统（见 _CONVENTIONS.md §6）
+    "instances": [],
+    "current_instance": "default",
+    "instance_root": os.path.join(app_root(), "instances"),
+    "jvm_args": "",
 }
 
 

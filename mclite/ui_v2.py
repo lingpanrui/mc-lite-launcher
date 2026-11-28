@@ -15,7 +15,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 from . import i18n, imgcache, modrinth, poll, util
-from . import doctor
+from . import doctor, instances
 from . import theme
 from .i18n import t
 
@@ -40,6 +40,7 @@ DANGER = "#e06c75"
 NAV = [
     ("home", "◆"),
     ("versions", "▣"),
+    ("instances", "❖"),
     ("content", "◈"),
     ("online", "◉"),
     ("poll", "★"),
@@ -95,6 +96,18 @@ def clip_text(text, cn=34, en=78):
     is_cn = any("\u4e00" <= ch <= "\u9fff" for ch in s)
     limit = cn if is_cn else en
     return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def parse_jvm_args(text):
+    """把界面输入的额外 JVM 参数拆成列表（支持引号），失败则按空白拆分。"""
+    import shlex
+    s = str(text or "").strip()
+    if not s:
+        return []
+    try:
+        return [a for a in shlex.split(s, posix=True) if a]
+    except Exception:
+        return [a for a in s.split() if a]
 
 
 def latest_mc_version(hit):
@@ -320,10 +333,12 @@ class App(tk.Tk):
         self.configure(bg=BG)
 
         self.cfg = util.load_config()
+        instances.migrate(self.cfg)
         self._apply_theme()
-        self.game_dir = self.cfg.get("game_dir") or os.path.join(util.app_root(), "game")
+        self.game_dir = instances.current(self.cfg)["game_dir"]
 
         self.page = "home"
+        self.inst_selected = None
         self.content_type = "mod"
         self.content_query = ""
         self.content_loader = ""
@@ -468,6 +483,7 @@ class App(tk.Tk):
         builder = {
             "home": self._page_home,
             "versions": self._page_versions,
+            "instances": self._page_instances,
             "content": self._page_content,
             "online": self._page_online,
             "poll": self._page_poll,
@@ -482,9 +498,17 @@ class App(tk.Tk):
         tk.Label(c, text=str(value), bg=CARD, fg=color or ACC, font=F(20, True), anchor="w").pack(anchor="w", padx=18, pady=(14, 0))
         tk.Label(c, text=title, bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", padx=18, pady=(2, 14))
 
-    def installed_versions(self):
+    def current_inst(self):
+        return instances.current(self.cfg)
+
+    def inst_display_name(self, inst):
+        if inst and inst.get("id") == instances.DEFAULT_ID:
+            return t("inst.default_name")
+        return (inst or {}).get("name") or "?"
+
+    def installed_versions(self, game_dir=None):
         out = []
-        vdir = os.path.join(self.game_dir, "versions")
+        vdir = os.path.join(game_dir or self.game_dir, "versions")
         try:
             for name in os.listdir(vdir):
                 p = os.path.join(vdir, name, name + ".json")
@@ -505,6 +529,18 @@ class App(tk.Tk):
         self._stat_card(stats, human_count(poll.total_votes(data)), t("home.stat.votes"), ACC)
         self._stat_card(stats, "%d / %d" % (len(data["mine"]), len(poll.FEATURES)), t("poll.mine"), WARN)
         self._stat_card(stats, "Modrinth", t("home.stat.platform"), "#5aa7f0")
+
+        # 当前实例条：切换后首页统计 / 版本列表 / 诊断都读这个实例目录
+        cur = self.current_inst()
+        bar = tk.Frame(self.page_host, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        bar.pack(fill="x", pady=(0, 18))
+        bb = tk.Frame(bar, bg=CARD)
+        bb.pack(fill="x", padx=16, pady=12)
+        tk.Label(bb, text="❖", bg=CARD, fg=ACC, font=F(13, True)).pack(side="left", padx=(0, 10))
+        tk.Label(bb, text=t("inst.home.bar") % (self.inst_display_name(cur), cur.get("game_dir", "")),
+                 bg=CARD, fg=SUB, font=F(9), anchor="w").pack(side="left", fill="x", expand=True)
+        Btn(bb, t("inst.manage"), lambda: self.show_page("instances"), kind="outline",
+            padx=14, pady=5, size=9).pack(side="right")
 
         tk.Label(self.page_host, text=t("home.quick"), bg=BG, fg=TXT, font=F(13, True), anchor="w").pack(anchor="w", pady=(0, 10))
         grid = tk.Frame(self.page_host, bg=BG)
@@ -531,9 +567,36 @@ class App(tk.Tk):
                      wraplength=258, justify="left", height=2).pack(anchor="w", padx=16, pady=(10, 0))
 
     # ------------------------------------------------------------ 版本
+    def _instance_strip(self, parent):
+        """版本页顶部的横向实例卡片条：点卡片切换当前实例。"""
+        cur = self.current_inst()
+        strip = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        strip.pack(fill="x", pady=(0, 14))
+        inner = tk.Frame(strip, bg=CARD)
+        inner.pack(fill="x", padx=14, pady=10)
+        tk.Label(inner, text=t("inst.current.label"), bg=CARD, fg=DIM, font=F(8, True),
+                 anchor="w").pack(side="left", padx=(0, 12))
+        for inst in instances.list_instances(self.cfg):
+            active = inst["id"] == cur["id"]
+            chip = tk.Frame(inner, bg=CARD2 if active else CARD,
+                            highlightbackground=ACC if active else LINE, highlightthickness=1,
+                            cursor="hand2")
+            chip.pack(side="left", padx=(0, 8))
+            cnt = instances.version_count(inst.get("game_dir"))
+            txt = "%s  ·  %d" % (self.inst_display_name(inst), cnt)
+            lab = tk.Label(chip, text=txt, bg=chip["bg"], fg=ACC if active else TXT,
+                           font=F(9, active), padx=12, pady=7, anchor="w")
+            lab.pack()
+            for w in (chip, lab):
+                w.bind("<ButtonRelease-1>", lambda e, iid=inst["id"]: self._switch_instance(iid))
+        Btn(inner, t("inst.manage"), lambda: self.show_page("instances"), kind="quiet",
+            padx=12, pady=5, size=8).pack(side="right")
+
     def _page_versions(self):
         Btn(self.head_right, t("versions.install"), self.open_install, kind="primary",
             padx=14, pady=6, size=9).pack(side="right")
+
+        self._instance_strip(self.page_host)
 
         installed = self.installed_versions()
         if not installed:
@@ -568,6 +631,7 @@ class App(tk.Tk):
 
     def launch_version(self, vid):
         cfg = self.cfg
+        inst = self.current_inst()
         self.set_status(t("versions.launching") % vid)
         auto = bool(cfg.get("auto_repair", True))
 
@@ -575,13 +639,24 @@ class App(tk.Tk):
             from . import java as jm, mojang
 
             try:
-                exe = cfg.get("java_path")
+                # 启动参数全部取「当前实例」，缺失时回退顶层 cfg（兼容旧配置）
+                exe = (inst.get("java_path") or cfg.get("java_path") or "").strip()
                 if not exe or not os.path.isfile(exe):
                     javas = jm.find_javas() or []
-                    exe = javas[0][1] if javas else None
+                    try:
+                        vj, _root = mojang.resolve_version(self.game_dir, vid)
+                        major = mojang.guess_java_major(vj)
+                    except Exception:
+                        major = 17
+                    exe = jm.pick_java(major, all_javas=javas) or (javas[0]["path"] if javas else None)
                 if not exe:
                     self.after(0, lambda: messagebox.showerror(t("common.v2badge"), t("versions.nojava")))
                     return
+
+                memory = int(inst.get("memory_mb") or cfg.get("memory_mb") or 4096)
+                width = int(inst.get("width") or cfg.get("width") or 854)
+                height = int(inst.get("height") or cfg.get("height") or 480)
+                extra_jvm = parse_jvm_args(inst.get("jvm_args") or cfg.get("jvm_args") or "")
 
                 # 1) 启动前体检 + 自动补齐
                 if auto:
@@ -600,12 +675,18 @@ class App(tk.Tk):
                         msg = str(e)
                         self.after(0, lambda m=msg: self.set_status(t("launch.repairfail") % m))
 
-                # 2) 组装命令并启动
+                # 2) 组装命令并启动（内存/宽高/额外 JVM 参数均来自当前实例）
                 cmd, _vj, _root, _missing = mojang.build_command(
                     self.game_dir, vid, exe, cfg.get("username") or "Steve",
-                    int(cfg.get("memory_mb") or 4096), int(cfg.get("width") or 854), int(cfg.get("height") or 480))
+                    memory, width, height, extra_jvm=extra_jvm)
                 lines = []
                 proc = mojang.launch(cmd, self.game_dir, on_output=lines.append)
+                # 记录最后启动版本到当前实例（供导出导入提示）
+                try:
+                    inst["last_version"] = vid
+                    instances.update(self.cfg, inst["id"], last_version=vid)
+                except Exception:
+                    pass
                 self.after(0, lambda: self.set_status(t("versions.launched") % vid))
 
                 # 3) 等待退出，非正常就分析
@@ -717,6 +798,454 @@ class App(tk.Tk):
             kind="ghost", padx=14, pady=8, size=9).pack(side="left", padx=(0, 8))
         Btn(row, t("crash.close"), win.destroy, kind="quiet", padx=16, pady=8,
             size=9).pack(side="right")
+
+    # ------------------------------------------------------------ 实例管理
+    def _page_instances(self):
+        Btn(self.head_right, t("inst.import"), self._inst_import, kind="ghost",
+            padx=14, pady=6, size=9).pack(side="right")
+        Btn(self.head_right, t("inst.new"), self._inst_new_dialog, kind="primary",
+            padx=14, pady=6, size=9).pack(side="right", padx=(0, 8))
+
+        # 顶部横向实例选择条
+        self.inst_selector_host = tk.Frame(self.page_host, bg=BG)
+        self.inst_selector_host.pack(fill="x", pady=(0, 14))
+        self._render_inst_selector()
+
+        # 下方全宽详情（与设置页同款 ScrollArea 结构，避免嵌套溢出）
+        self.inst_detail_host = tk.Frame(self.page_host, bg=BG)
+        self.inst_detail_host.pack(fill="both", expand=True)
+        self._render_inst_detail()
+
+    def _select_inst(self, iid):
+        self.inst_selected = iid
+        self._render_inst_selector()
+        self._render_inst_detail()
+
+    def _render_inst_selector(self):
+        host = getattr(self, "inst_selector_host", None)
+        if host is None:
+            return
+        for w in host.winfo_children():
+            w.destroy()
+        insts = instances.list_instances(self.cfg)
+        cur = self.current_inst()
+        if not self.inst_selected or not instances.get_instance(self.cfg, self.inst_selected):
+            self.inst_selected = cur["id"]
+        card = tk.Frame(host, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        card.pack(fill="x")
+        inner = tk.Frame(card, bg=CARD)
+        inner.pack(fill="x", padx=14, pady=10)
+        tk.Label(inner, text=t("inst.current.label"), bg=CARD, fg=DIM, font=F(8, True),
+                 anchor="w").pack(side="left", padx=(0, 12))
+        if not insts:
+            tk.Label(inner, text=t("inst.empty"), bg=CARD, fg=SUB, font=F(9),
+                     anchor="w").pack(side="left")
+            return
+        for inst in insts:
+            active = inst["id"] == self.inst_selected
+            chip = tk.Frame(inner, bg=CARD2 if active else CARD,
+                            highlightbackground=ACC if active else LINE, highlightthickness=1,
+                            cursor="hand2")
+            chip.pack(side="left", padx=(0, 8))
+            cnt = instances.version_count(inst.get("game_dir"))
+            lab = tk.Label(chip, text="%s  ·  %d" % (self.inst_display_name(inst), cnt),
+                           bg=chip["bg"], fg=ACC if active else TXT, font=F(9, active),
+                           padx=12, pady=7, anchor="w")
+            lab.pack()
+            for w in (chip, lab):
+                w.bind("<ButtonRelease-1>", lambda e, iid=inst["id"]: self._select_inst(iid))
+
+    def _render_inst_detail(self):
+        host = getattr(self, "inst_detail_host", None)
+        if host is None:
+            return
+        for w in host.winfo_children():
+            w.destroy()
+        inst = instances.get_instance(self.cfg, self.inst_selected)
+        if not inst:
+            tk.Label(host, text=t("inst.noselect"), bg=BG, fg=SUB, font=F(10),
+                     anchor="w").pack(anchor="w", pady=40)
+            return
+
+        cur = self.current_inst()
+        is_current = inst["id"] == cur["id"]
+        area = ScrollArea(host, bg=BG)
+        area.pack(fill="both", expand=True)
+        p = area.inner
+
+        def card(title):
+            tk.Label(p, text=title, bg=BG, fg=DIM, font=F(8, True), anchor="w").pack(anchor="w", pady=(4, 6))
+            c = tk.Frame(p, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+            c.pack(fill="x", pady=(0, 14))
+            inner = tk.Frame(c, bg=CARD)
+            inner.pack(fill="x", padx=16, pady=14)
+            return inner
+
+        def entry(parent, var, width=20, expand=False):
+            e = tk.Entry(parent, textvariable=var, bg=CARD2, fg=TXT, insertbackground=TXT,
+                         relief="flat", bd=0, highlightthickness=1, highlightbackground=LINE,
+                         highlightcolor=ACC, font=F(10), width=width)
+            e.pack(side="left", ipady=5, fill="x", expand=expand)
+            return e
+
+        def flabel(parent, text, width=None):
+            # 不固定宽度：中文标签按自然宽度排布，避免被字符宽度裁切
+            return tk.Label(parent, text=text, bg=CARD, fg=SUB, font=F(9), anchor="w")
+
+        # ---- 基本信息
+        box = card(t("inst.basic"))
+        name_var = tk.StringVar(value=inst.get("name") or "")
+        icon_var = tk.StringVar(value=inst.get("icon") or "◈")
+        dir_var = tk.StringVar(value=inst.get("game_dir") or "")
+
+        r1 = tk.Frame(box, bg=CARD); r1.pack(fill="x", pady=4)
+        flabel(r1, t("inst.name")).pack(side="left", padx=(0, 10))
+        entry(r1, name_var, 18, expand=True)
+        flabel(r1, t("inst.icon"), 8).pack(side="left", padx=(16, 10))
+        entry(r1, icon_var, 6)
+
+        r2 = tk.Frame(box, bg=CARD); r2.pack(fill="x", pady=4)
+        flabel(r2, t("inst.dir")).pack(side="left", padx=(0, 10))
+        entry(r2, dir_var, 22, expand=True)
+        Btn(r2, t("inst.browse"), lambda: self._pick_dir(dir_var), kind="ghost",
+            padx=10, pady=5, size=9).pack(side="left", padx=(8, 0))
+        Btn(r2, t("inst.open"), lambda: util.open_path(dir_var.get()), kind="quiet",
+            padx=10, pady=5, size=9).pack(side="left", padx=(6, 0))
+
+        # ---- 启动参数
+        box = card(t("inst.launch"))
+        java_var = tk.StringVar(value=inst.get("java_path") or "")
+        mem_var = tk.StringVar(value=str(inst.get("memory_mb") or 4096))
+        w_var = tk.StringVar(value=str(inst.get("width") or 854))
+        h_var = tk.StringVar(value=str(inst.get("height") or 480))
+        jvm_var = tk.StringVar(value=inst.get("jvm_args") or "")
+
+        r3 = tk.Frame(box, bg=CARD); r3.pack(fill="x", pady=4)
+        flabel(r3, t("inst.java")).pack(side="left", padx=(0, 10))
+        entry(r3, java_var, 22, expand=True)
+        Btn(r3, t("inst.browse"), lambda: self._pick_java(java_var), kind="ghost",
+            padx=10, pady=5, size=9).pack(side="left", padx=(8, 0))
+
+        r4 = tk.Frame(box, bg=CARD); r4.pack(fill="x", pady=4)
+        flabel(r4, t("inst.memory"), 9).pack(side="left", padx=(0, 8))
+        entry(r4, mem_var, 8)
+        tk.Label(r4, text="MB", bg=CARD, fg=SUB, font=F(9)).pack(side="left", padx=(6, 20))
+        flabel(r4, t("inst.width"), 7).pack(side="left", padx=(0, 8))
+        entry(r4, w_var, 8)
+        flabel(r4, t("inst.height"), 7).pack(side="left", padx=(20, 8))
+        entry(r4, h_var, 8)
+
+        r5 = tk.Frame(box, bg=CARD); r5.pack(fill="x", pady=4)
+        flabel(r5, t("inst.jvm"), 9).pack(side="left", padx=(0, 10))
+        entry(r5, jvm_var, 22, expand=True)
+
+        r6 = tk.Frame(box, bg=CARD); r6.pack(fill="x", pady=(10, 0))
+        Btn(r6, t("inst.save"), lambda: do_save(), kind="primary", padx=18, pady=6, size=9).pack(side="left")
+
+        def do_save():
+            try:
+                mem = int(mem_var.get())
+                ww = int(w_var.get())
+                hh = int(h_var.get())
+            except Exception:
+                messagebox.showerror(t("common.v2badge"), t("inst.wh.bad"))
+                return
+            if mem < 1024:
+                messagebox.showerror(t("common.v2badge"), t("inst.mem.bad"))
+                return
+            if ww <= 0 or hh <= 0:
+                messagebox.showerror(t("common.v2badge"), t("inst.wh.bad"))
+                return
+            try:
+                instances.update(
+                    self.cfg, inst["id"], name=name_var.get(), icon=icon_var.get(),
+                    game_dir=dir_var.get(), java_path=java_var.get(), memory_mb=mem,
+                    width=ww, height=hh, jvm_args=jvm_var.get())
+            except Exception as e:
+                messagebox.showerror(t("common.v2badge"), str(e))
+                return
+            self.game_dir = self.current_inst()["game_dir"]
+            self.set_status(t("inst.saved"))
+            self._render_inst_selector()
+            self._render_inst_detail()
+
+        # ---- 存档备份 / 恢复
+        box = card(t("inst.backup"))
+        opt_var = tk.BooleanVar(value=True)
+        cfg_var = tk.BooleanVar(value=False)
+        cr = tk.Frame(box, bg=CARD); cr.pack(fill="x", pady=2)
+        tk.Checkbutton(cr, text=t("inst.backup.opts"), variable=opt_var, bg=CARD, fg=TXT,
+                       selectcolor=CARD2, activebackground=CARD, activeforeground=TXT,
+                       font=F(9), bd=0, highlightthickness=0).pack(side="left", padx=(0, 18))
+        tk.Checkbutton(cr, text=t("inst.backup.config"), variable=cfg_var, bg=CARD, fg=TXT,
+                       selectcolor=CARD2, activebackground=CARD, activeforeground=TXT,
+                       font=F(9), bd=0, highlightthickness=0).pack(side="left")
+        br = tk.Frame(box, bg=CARD); br.pack(fill="x", pady=(8, 0))
+        Btn(br, t("inst.backup.now"), lambda: self._inst_backup(inst, opt_var.get(), cfg_var.get()),
+            kind="primary", padx=16, pady=6, size=9).pack(side="left", padx=(0, 8))
+        Btn(br, t("inst.restore"), lambda: self._inst_restore(inst), kind="ghost",
+            padx=16, pady=6, size=9).pack(side="left", padx=(0, 8))
+        Btn(br, t("inst.open"), lambda: util.open_path(instances.backups_dir(inst["game_dir"])),
+            kind="quiet", padx=14, pady=6, size=9).pack(side="left")
+
+        backups = instances.list_backups(inst["game_dir"])[:5]
+        if backups:
+            tk.Label(box, text=t("inst.backup.list"), bg=CARD, fg=DIM, font=F(8, True),
+                     anchor="w").pack(anchor="w", pady=(12, 4))
+            for zp in backups:
+                tk.Label(box, text="·  " + os.path.basename(zp), bg=CARD, fg=SUB, font=F(8),
+                         anchor="w").pack(anchor="w")
+        else:
+            tk.Label(box, text=t("inst.backup.empty"), bg=CARD, fg=DIM, font=F(8),
+                     anchor="w").pack(anchor="w", pady=(10, 0))
+
+        # ---- 实例操作
+        box = card(t("inst.actions"))
+        ar = tk.Frame(box, bg=CARD); ar.pack(fill="x")
+        if not is_current:
+            Btn(ar, t("inst.switch"), lambda: self._switch_instance(inst["id"]), kind="primary",
+                padx=16, pady=6, size=9).pack(side="left", padx=(0, 8))
+        Btn(ar, t("inst.duplicate"), lambda: self._inst_duplicate(inst), kind="ghost",
+            padx=14, pady=6, size=9).pack(side="left", padx=(0, 8))
+        Btn(ar, t("inst.export"), lambda: self._inst_export(inst), kind="ghost",
+            padx=14, pady=6, size=9).pack(side="left", padx=(0, 8))
+        Btn(ar, t("inst.delete"), lambda: self._inst_delete(inst), kind="danger",
+            padx=14, pady=6, size=9).pack(side="left")
+        tk.Label(box, text=t("inst.dup.note"), bg=CARD, fg=DIM, font=F(8), anchor="w",
+                 wraplength=620, justify="left").pack(anchor="w", pady=(10, 0))
+        if inst.get("builtin"):
+            tk.Label(box, text=t("inst.delete.default"), bg=CARD, fg=WARN, font=F(8),
+                     anchor="w", wraplength=620, justify="left").pack(anchor="w", pady=(8, 0))
+
+    # ---- 实例动作
+    def _pick_dir(self, var):
+        p = filedialog.askdirectory(title=t("inst.dir"))
+        if p:
+            var.set(p)
+
+    def _pick_java(self, var):
+        p = filedialog.askopenfilename(title=t("inst.java.browse"),
+                                      filetypes=[("javaw.exe", "*.exe"), ("所有文件", "*.*")])
+        if p:
+            var.set(p)
+
+    def _switch_instance(self, iid):
+        try:
+            inst = instances.switch(self.cfg, iid)
+        except Exception as e:
+            messagebox.showerror(t("common.v2badge"), str(e))
+            return
+        self.game_dir = inst["game_dir"]
+        self.inst_selected = iid
+        self.set_status(t("inst.switch.done") % self.inst_display_name(inst))
+        if self.page in ("versions", "home", "instances", "settings"):
+            self.show_page(self.page)
+
+    def _inst_new_dialog(self):
+        win = tk.Toplevel(self)
+        win.title(t("inst.new.title"))
+        win.configure(bg=BG)
+        win.geometry("580x300")
+        win.transient(self)
+        win.resizable(False, False)
+
+        tk.Label(win, text=t("inst.new.title"), bg=BG, fg=TXT, font=F(16, True),
+                 anchor="w").pack(fill="x", padx=24, pady=(22, 4))
+        tk.Label(win, text=t("inst.new.dirhint"), bg=BG, fg=SUB, font=F(9),
+                 anchor="w", wraplength=520, justify="left").pack(fill="x", padx=24)
+
+        body = tk.Frame(win, bg=BG)
+        body.pack(fill="x", padx=24, pady=(18, 0))
+        body.columnconfigure(1, weight=1)
+        name_var = tk.StringVar(value="")
+        dir_var = tk.StringVar(value="")
+        icon_var = tk.StringVar(value="◈")
+
+        def grid_row(r, label, var, width=24, browse=None):
+            tk.Label(body, text=label, bg=BG, fg=SUB, font=F(9), anchor="w").grid(
+                row=r, column=0, sticky="w", pady=7, padx=(0, 10))
+            e = tk.Entry(body, textvariable=var, bg=CARD2, fg=TXT, insertbackground=TXT, relief="flat",
+                         bd=0, highlightthickness=1, highlightbackground=LINE, highlightcolor=ACC,
+                         font=F(10), width=width)
+            e.grid(row=r, column=1, sticky="ew", pady=7, padx=(4, 0), ipady=4)
+            if browse:
+                Btn(body, t("inst.browse"), browse, kind="ghost", padx=12, pady=5, size=9).grid(
+                    row=r, column=2, sticky="w", padx=(8, 0))
+            return e
+
+        name_entry = grid_row(0, t("inst.new.name"), name_var, 26)
+        grid_row(1, t("inst.icon"), icon_var, 6)
+        grid_row(2, t("inst.new.dir"), dir_var, 26, lambda: self._pick_dir(dir_var))
+
+        state = tk.Label(win, text="", bg=BG, fg=DANGER, font=F(9), anchor="w")
+        state.pack(fill="x", padx=24, pady=(10, 0))
+
+        def create():
+            name = name_var.get().strip()
+            if not name:
+                state.config(text=t("inst.new.name"))
+                return
+            try:
+                inst = instances.create(self.cfg, name, game_dir=dir_var.get().strip(),
+                                        icon=icon_var.get().strip() or "◈")
+            except Exception as e:
+                state.config(text=str(e))
+                return
+            self.inst_selected = inst["id"]
+            self.game_dir = inst["game_dir"]
+            win.destroy()
+            self.show_page("instances")
+            self.set_status(t("inst.switch.done") % self.inst_display_name(inst))
+
+        foot = tk.Frame(win, bg=BG)
+        foot.pack(side="bottom", fill="x", padx=24, pady=(16, 20))
+        Btn(foot, t("common.close"), win.destroy, kind="quiet", padx=16, pady=7, size=9).pack(side="right")
+        Btn(foot, t("inst.new"), create, kind="primary", padx=18, pady=7, size=10).pack(side="right", padx=(0, 8))
+        name_entry.focus_set()
+        win.update_idletasks()
+        win.geometry("580x%d" % win.winfo_reqheight())
+
+    def _inst_rename_dialog(self, inst):
+        win = tk.Toplevel(self)
+        win.title(t("inst.rename.title"))
+        win.configure(bg=BG)
+        win.geometry("420x180")
+        win.transient(self)
+        win.resizable(False, False)
+        tk.Label(win, text=t("inst.rename.title"), bg=BG, fg=TXT, font=F(14, True),
+                 anchor="w").pack(fill="x", padx=22, pady=(20, 10))
+        var = tk.StringVar(value=inst.get("name") or "")
+        e = tk.Entry(win, textvariable=var, bg=CARD2, fg=TXT, insertbackground=TXT, relief="flat",
+                      bd=0, highlightthickness=1, highlightbackground=LINE, highlightcolor=ACC, font=F(10))
+        e.pack(fill="x", padx=22, ipady=6)
+        e.focus_set()
+
+        def ok():
+            try:
+                instances.rename(self.cfg, inst["id"], var.get())
+            except Exception as ex:
+                messagebox.showerror(t("common.v2badge"), str(ex))
+                return
+            win.destroy()
+            self._render_inst_selector()
+            self._render_inst_detail()
+
+        foot = tk.Frame(win, bg=BG)
+        foot.pack(fill="x", padx=22, pady=16)
+        Btn(foot, t("common.close"), win.destroy, kind="quiet", padx=14, pady=6, size=9).pack(side="right")
+        Btn(foot, t("common.save"), ok, kind="primary", padx=16, pady=6, size=9).pack(side="right", padx=(0, 8))
+        win.bind("<Return>", lambda ev: ok())
+
+    def _inst_delete(self, inst):
+        if inst.get("builtin") or inst["id"] == instances.DEFAULT_ID:
+            messagebox.showinfo(t("common.v2badge"), t("inst.delete.default"))
+            return
+        ok = messagebox.askyesno(
+            t("inst.delete"),
+            t("inst.delete.confirm") % (self.inst_display_name(inst), inst.get("game_dir", "")))
+        if not ok:
+            return
+        try:
+            removed = instances.delete(self.cfg, inst["id"])
+        except Exception as e:
+            messagebox.showerror(t("common.v2badge"), str(e))
+            return
+        self.game_dir = self.current_inst()["game_dir"]
+        self.inst_selected = self.current_inst()["id"]
+        self.set_status(t("inst.delete.done") + "：" + removed)
+        self.show_page("instances")
+
+    def _inst_duplicate(self, inst):
+        try:
+            new = instances.duplicate(self.cfg, inst["id"])
+        except Exception as e:
+            messagebox.showerror(t("common.v2badge"), str(e))
+            return
+        self.inst_selected = new["id"]
+        self.game_dir = new["game_dir"]
+        self.show_page("instances")
+        messagebox.showinfo(t("common.v2badge"), t("inst.duplicate.done") % self.inst_display_name(new))
+
+    def _inst_export(self, inst):
+        default_name = (inst.get("name") or "instance") + "-instance.json"
+        p = filedialog.asksaveasfilename(title=t("inst.export.pick"), defaultextension=".json",
+                                         initialfile=default_name,
+                                         filetypes=[("JSON", "*.json")])
+        if not p:
+            return
+        try:
+            instances.export_instance(self.cfg, inst["id"], p)
+        except Exception as e:
+            messagebox.showerror(t("common.v2badge"), str(e))
+            return
+        messagebox.showinfo(t("common.v2badge"), t("inst.export.done") % p)
+
+    def _inst_import(self):
+        p = filedialog.askopenfilename(title=t("inst.import.pick"),
+                                       filetypes=[("JSON", "*.json"), ("所有文件", "*.*")])
+        if not p:
+            return
+        try:
+            inst, missing = instances.import_instance(self.cfg, p)
+        except Exception as e:
+            messagebox.showerror(t("common.v2badge"), t("inst.import.bad") + "\n" + str(e))
+            return
+        self.inst_selected = inst["id"]
+        self.game_dir = inst["game_dir"]
+        if missing:
+            go = messagebox.askyesno(t("inst.import.missing.title"),
+                                     t("inst.import.missing") % missing)
+            self.show_page("instances")
+            if go:
+                self.open_install()
+        else:
+            self.show_page("instances")
+            messagebox.showinfo(t("common.v2badge"), t("inst.import.done") % self.inst_display_name(inst))
+
+    def _inst_backup(self, inst, include_options, include_config):
+        self.set_status(t("inst.backup.now") + "…")
+
+        def work():
+            try:
+                zp, n = instances.backup_saves(inst["game_dir"],
+                                               include_options=include_options,
+                                               include_config=include_config)
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror(t("common.v2badge"), str(e)))
+                self.after(0, lambda: self.set_status(""))
+                return
+            self.after(0, lambda: messagebox.showinfo(t("common.v2badge"),
+                                                      t("inst.backup.done") % zp))
+            self.after(0, self._render_inst_detail)
+            self.after(0, lambda: self.set_status(""))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _inst_restore(self, inst):
+        initial = instances.backups_dir(inst["game_dir"])
+        try:
+            os.makedirs(initial, exist_ok=True)
+        except Exception:
+            pass
+        p = filedialog.askopenfilename(title=t("inst.restore.pick"), initialdir=initial,
+                                       filetypes=[("ZIP", "*.zip"), ("所有文件", "*.*")])
+        if not p:
+            return
+        if not messagebox.askyesno(t("inst.restore"), t("inst.restore.confirm")):
+            return
+
+        def work():
+            try:
+                res = instances.restore_saves(inst["game_dir"], p)
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror(t("common.v2badge"), str(e)))
+                return
+            pre = res.get("pre_backup") or "—"
+            self.after(0, lambda: messagebox.showinfo(
+                t("common.v2badge"), t("inst.restore.done") % (res["extracted"], pre)))
+            self.after(0, self._render_inst_detail)
+
+        threading.Thread(target=work, daemon=True).start()
 
     # ------------------------------------------------------------ 安装新版本
     def open_install(self):
@@ -1317,6 +1846,12 @@ class App(tk.Tk):
         area.pack(fill="both", expand=True)
         parent = area.inner
 
+        cur = self.current_inst()
+        tk.Label(parent, text=t("inst.settings.note"), bg=BG, fg=SUB, font=F(8),
+                 anchor="w", wraplength=880, justify="left").pack(anchor="w", pady=(0, 4))
+        tk.Label(parent, text="%s：%s" % (t("inst.current.label"), self.inst_display_name(cur)),
+                 bg=BG, fg=ACC, font=F(9, True), anchor="w").pack(anchor="w", pady=(0, 10))
+
         def section(title):
             tk.Label(parent, text=title, bg=BG, fg=DIM, font=F(8, True), anchor="w").pack(anchor="w", pady=(6, 6))
             c = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
@@ -1358,11 +1893,11 @@ class App(tk.Tk):
             chip.pack(side="left", padx=(0, 10))
             chip.bind("<ButtonRelease-1>", lambda e, k=key: self.switch_accent(k))
 
-        # 内存
+        # 内存（作用于当前实例）
         box = section(t("settings.memory"))
         row = tk.Frame(box, bg=CARD)
         row.pack(fill="x")
-        self.mem_var = tk.StringVar(value=str(self.cfg.get("memory_mb") or 4096))
+        self.mem_var = tk.StringVar(value=str(cur.get("memory_mb") or 4096))
         e = tk.Entry(row, textvariable=self.mem_var, bg=CARD2, fg=TXT, insertbackground=TXT,
                      relief="flat", bd=0, highlightthickness=1, highlightbackground=LINE,
                      highlightcolor=ACC, font=F(10), width=10)
@@ -1370,11 +1905,11 @@ class App(tk.Tk):
         tk.Label(row, text="MB", bg=CARD, fg=SUB, font=F(9)).pack(side="left", padx=(0, 14))
         Btn(row, t("common.save"), self._save_memory, kind="ghost", padx=14, pady=5, size=9).pack(side="left")
 
-        # Java
+        # Java（作用于当前实例）
         box = section(t("settings.java"))
         row = tk.Frame(box, bg=CARD)
         row.pack(fill="x")
-        self.java_var = tk.StringVar(value=self.cfg.get("java_path") or "")
+        self.java_var = tk.StringVar(value=cur.get("java_path") or "")
         e = tk.Entry(row, textvariable=self.java_var, bg=CARD2, fg=TXT, insertbackground=TXT,
                      relief="flat", bd=0, highlightthickness=1, highlightbackground=LINE,
                      highlightcolor=ACC, font=F(9), width=52)
@@ -1422,7 +1957,7 @@ class App(tk.Tk):
 
         # 关于
         box = section(t("settings.about"))
-        tk.Label(box, text="MC Lite 正式版 v1.2  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
+        tk.Label(box, text="MC Lite 正式版 v1.3.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
                  font=F(10, True), anchor="w").pack(anchor="w")
         tk.Label(box, text=t("settings.about.text"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", pady=(4, 0))
 
@@ -1432,8 +1967,12 @@ class App(tk.Tk):
         except Exception:
             self.set_status(t("common.badinput"))
             return
-        self.cfg["memory_mb"] = mb
-        util.save_config(self.cfg)
+        try:
+            instances.update(self.cfg, self.current_inst()["id"], memory_mb=mb)
+        except Exception as e:
+            self.set_status(str(e))
+            return
+        self.game_dir = self.current_inst()["game_dir"]
         self.set_status(t("common.saved"))
 
     def _pick_java(self):
@@ -1442,8 +1981,12 @@ class App(tk.Tk):
             self.java_var.set(p)
 
     def _save_java(self):
-        self.cfg["java_path"] = self.java_var.get().strip()
-        util.save_config(self.cfg)
+        try:
+            instances.update(self.cfg, self.current_inst()["id"],
+                              java_path=self.java_var.get().strip())
+        except Exception as e:
+            self.set_status(str(e))
+            return
         self.set_status(t("common.saved"))
 
 
