@@ -18,6 +18,7 @@ from tkinter import filedialog, messagebox, simpledialog
 from . import i18n, imgcache, modrinth, poll, util
 from . import doctor, instances, accounts, forge, quilt, contenthub, localcontent
 from . import downloader, sharedpool, prewarm, protocol, conflictcheck, migration
+from . import online
 from . import theme
 from .i18n import t
 
@@ -3409,96 +3410,571 @@ class App(tk.Tk):
         ensure_pack()
 
     # ------------------------------------------------------------ 联机
-    def _page_online(self):
-        from . import tunnel
-        card = tk.Frame(self.page_host, bg=CARD, highlightbackground=LINE, highlightthickness=1)
-        card.pack(fill="x")
+    # ============================================================ 联机（批次7）
+    def _online_section(self, parent, title, desc=None):
+        card = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        card.pack(fill="x", pady=(0, 14))
         inner = tk.Frame(card, bg=CARD)
-        inner.pack(fill="x", padx=18, pady=18)
-
-        tk.Label(inner, text=t("online.port"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", pady=(0, 6))
-        port_row = tk.Frame(inner, bg=CARD)
-        port_row.pack(fill="x")
-        self.port_var = tk.StringVar(value="25565")
-        e = tk.Entry(port_row, textvariable=self.port_var, bg=CARD2, fg=TXT, insertbackground=TXT,
-                     relief="flat", bd=0, highlightthickness=1, highlightbackground=LINE,
-                     highlightcolor=ACC, font=F(10), width=12)
-        e.pack(side="left", ipady=6, padx=(0, 10))
-        Btn(port_row, t("online.detect"), lambda: self._detect_port(), kind="ghost", padx=14, pady=5, size=9).pack(side="left")
-        self.tunnel_btn = Btn(port_row, t("online.start"), lambda: self._toggle_tunnel(), kind="primary",
-                              padx=16, pady=5, size=9)
-        self.tunnel_btn.pack(side="left", padx=(8, 0))
-
-        tk.Label(inner, text=t("online.address"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", pady=(18, 6))
-        addr_row = tk.Frame(inner, bg=CARD)
-        addr_row.pack(fill="x")
-        self.addr_var = tk.StringVar(value="—")
-        tk.Label(addr_row, textvariable=self.addr_var, bg=CARD2, fg=ACC, font=F(11, True),
-                 padx=14, pady=9, anchor="w").pack(side="left", fill="x", expand=True)
-        Btn(addr_row, t("online.copy"), lambda: self._copy_addr(), kind="ghost", padx=14, pady=5, size=9).pack(side="left", padx=(10, 0))
-
-        tk.Label(self.page_host, text=t("online.hint"), bg=BG, fg=DIM, font=F(9),
-                 anchor="w", wraplength=880, justify="left").pack(fill="x", pady=(12, 0))
-
-        self._tunnel_proc = None
-
-    def _detect_port(self):
-        from . import tunnel
-        try:
-            port = tunnel.detect_lan_port(self.game_dir)
-        except Exception:
-            port = None
-        if port:
-            self.port_var.set(str(port))
-            self.set_status(t("online.portfound") % port)
+        inner.pack(fill="x", padx=20, pady=16)
+        tk.Label(inner, text=title, bg=CARD, fg=TXT, font=F(13, True), anchor="w").pack(anchor="w")
+        if desc:
+            tk.Label(inner, text=desc, bg=CARD, fg=SUB, font=F(9), anchor="w",
+                     justify="left", wraplength=920).pack(anchor="w", pady=(5, 12))
         else:
-            self.set_status(t("online.portmissing"))
+            tk.Frame(inner, bg=CARD, height=10).pack()
+        return inner
 
-    def _copy_addr(self):
-        val = self.addr_var.get()
-        if val and val != "—":
-            self.clipboard_clear()
-            self.clipboard_append(val)
-            self.set_status(t("common.copied"))
+    def _online_entry(self, parent, var, width=16):
+        return tk.Entry(parent, textvariable=var, bg=CARD2, fg=TXT, insertbackground=TXT,
+                        relief="flat", bd=0, highlightthickness=1, highlightbackground=LINE,
+                        highlightcolor=ACC, font=F(10), width=width)
 
-    def _toggle_tunnel(self):
-        from . import tunnel
-        if self._tunnel_proc:
+    def _online_copy(self, text):
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.set_status(t("common.copied"))
+
+    def _online_local_ctx(self):
+        inst = self.current_inst()
+        vid = inst.get("last_version") or self.cfg.get("last_version") or ""
+        loader = ""
+        try:
+            for name, _typ, ld in self.installed_versions():
+                if name == vid:
+                    loader = ld or ""
+                    break
+        except Exception:
+            pass
+        try:
+            mh = online.mods_short_hash(self.game_dir)["hash"]
+        except Exception:
+            mh = ""
+        return {"mc_version": vid, "loader": loader, "mods_hash": mh}
+
+    def _page_online(self):
+        sa = ScrollArea(self.page_host, bg=BG)
+        sa.pack(fill="both", expand=True)
+        host = sa.inner
+        self.online_srv_proc = None
+        self.online_srv_done = False
+        self.online_bore_proc = None
+        self.online_card_text = ""
+        inst = self.current_inst()
+        vid = inst.get("last_version") or self.cfg.get("last_version") or ""
+        self.online_srv_ver = tk.StringVar(value="1.20.1")
+        self.online_srv_port = tk.StringVar(value=str(online.SERVER_PORT_DEFAULT))
+        self.online_srv_mem = tk.StringVar(value="1024")
+        self.online_srv_addr = tk.StringVar(value="—")
+        self.online_lan_var = tk.StringVar(value="—")
+        self.online_wifi_var = tk.StringVar(value="—")
+        self.online_bore_port = tk.StringVar(value="25565")
+        self.online_bore_var = tk.StringVar(value="—")
+        self.online_join_host = tk.StringVar(value="")
+        self.online_join_port = tk.StringVar(value="25565")
+        self.online_join_ver = tk.StringVar(value=vid)
+        self.online_join_loader = tk.StringVar(value="")
+        self.online_join_online = tk.BooleanVar(value=False)
+        self.online_local_info = tk.StringVar(value="")
+        self.online_card_result = tk.StringVar(value="")
+
+        # 1) 开房间：集成服务端 + 客户端局域网检测
+        s1 = self._online_section(host, t("oj.s1_title"), t("oj.s1_desc"))
+        r1 = tk.Frame(s1, bg=CARD)
+        r1.pack(fill="x")
+        tk.Label(r1, text=t("oj.srv_ver"), bg=CARD, fg=SUB, font=F(9)).pack(side="left", padx=(0, 6))
+        self._online_entry(r1, self.online_srv_ver, 9).pack(side="left", ipady=4, padx=(0, 14))
+        tk.Label(r1, text=t("oj.srv_port"), bg=CARD, fg=SUB, font=F(9)).pack(side="left", padx=(0, 6))
+        self._online_entry(r1, self.online_srv_port, 8).pack(side="left", ipady=4, padx=(0, 14))
+        tk.Label(r1, text=t("oj.srv_mem"), bg=CARD, fg=SUB, font=F(9)).pack(side="left", padx=(0, 6))
+        self._online_entry(r1, self.online_srv_mem, 7).pack(side="left", ipady=4, padx=(0, 14))
+        self.online_srv_start_btn = Btn(r1, t("oj.srv_start"), self._online_start_server,
+                                         kind="primary", padx=18, pady=6, size=9)
+        self.online_srv_start_btn.pack(side="left")
+        self.online_srv_stop_btn = Btn(r1, t("oj.srv_stop"), self._online_stop_server,
+                                       kind="danger", padx=14, pady=6, size=9)
+        self.online_srv_stop_btn.pack(side="left", padx=(8, 0))
+        tk.Label(s1, textvariable=self.online_srv_addr, bg=CARD2, fg=ACC, font=F(10, True),
+                 padx=12, pady=8, anchor="w").pack(fill="x", pady=(12, 8))
+        self.online_srv_log = tk.Text(s1, height=7, bg=CARD2, fg=SUB, relief="flat", bd=0,
+                                      font=F(8), wrap="word")
+        self.online_srv_log.pack(fill="x")
+        self.online_srv_log.configure(state="disabled")
+
+        tk.Frame(s1, bg=CARD, height=12).pack()
+        r2 = tk.Frame(s1, bg=CARD)
+        r2.pack(fill="x")
+        tk.Label(r2, text=t("oj.lan_title"), bg=CARD, fg=TXT, font=F(10, True)).pack(side="left")
+        Btn(r2, t("oj.lan_detect"), self._online_detect_lan, kind="ghost", padx=14, pady=5, size=9).pack(side="left", padx=(12, 0))
+        Btn(r2, t("oj.lan_copy"), lambda: self._online_copy(self.online_lan_var.get()), kind="ghost",
+            padx=14, pady=5, size=9).pack(side="left", padx=(8, 0))
+        tk.Label(s1, textvariable=self.online_lan_var, bg=CARD, fg=SUB, font=F(9), anchor="w",
+                 justify="left", wraplength=900).pack(fill="x", pady=(8, 0))
+        tk.Label(s1, text=t("oj.lan_desc"), bg=CARD, fg=DIM, font=F(8), anchor="w",
+                 justify="left", wraplength=900).pack(fill="x", pady=(6, 0))
+
+        # 2) 三种网络路径
+        s2 = self._online_section(host, t("oj.net_title"), t("oj.net_desc"))
+        # 同 WiFi
+        wf = tk.Frame(s2, bg=CARD2, highlightbackground=LINE, highlightthickness=1)
+        wf.pack(fill="x", pady=(0, 10))
+        wfi = tk.Frame(wf, bg=CARD2)
+        wfi.pack(fill="x", padx=14, pady=12)
+        tk.Label(wfi, text="① " + t("oj.net_wifi"), bg=CARD2, fg=TXT, font=F(10, True), anchor="w").pack(anchor="w")
+        tk.Label(wfi, text=t("oj.net_wifi_desc"), bg=CARD2, fg=SUB, font=F(9), anchor="w",
+                 justify="left", wraplength=880).pack(anchor="w", pady=(4, 8))
+        wr = tk.Frame(wfi, bg=CARD2)
+        wr.pack(fill="x")
+        tk.Label(wr, textvariable=self.online_wifi_var, bg=CARD2, fg=ACC, font=F(9), anchor="w",
+                 justify="left", wraplength=760).pack(side="left", fill="x", expand=True)
+        Btn(wr, t("oj.common_refresh"), self._online_refresh_wifi, kind="ghost", padx=12, pady=5, size=9).pack(side="left", padx=(8, 0))
+        # 异地虚拟局域网
+        vl = tk.Frame(s2, bg=CARD2, highlightbackground=LINE, highlightthickness=1)
+        vl.pack(fill="x", pady=(0, 10))
+        vli = tk.Frame(vl, bg=CARD2)
+        vli.pack(fill="x", padx=14, pady=12)
+        tk.Label(vli, text="② " + t("oj.net_vlan"), bg=CARD2, fg=TXT, font=F(10, True), anchor="w").pack(anchor="w")
+        tk.Label(vli, text=t("oj.net_vlan_desc"), bg=CARD2, fg=SUB, font=F(9), anchor="w",
+                 justify="left", wraplength=880).pack(anchor="w", pady=(4, 8))
+        for g in online.virtual_lan_guides(i18n.get_lang()):
+            gc = tk.Frame(vli, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+            gc.pack(fill="x", pady=(0, 8))
+            gci = tk.Frame(gc, bg=CARD)
+            gci.pack(fill="x", padx=12, pady=10)
+            head = tk.Frame(gci, bg=CARD)
+            head.pack(fill="x")
+            tk.Label(head, text=g["name"], bg=CARD, fg=ACC, font=F(10, True), anchor="w").pack(side="left")
+            Btn(head, t("oj.common_open"), lambda u=g["url"]: webbrowser.open(u), kind="ghost",
+                padx=10, pady=3, size=8).pack(side="right")
+            Btn(head, t("oj.common_copy"), lambda u=g["url"]: self._online_copy(u), kind="quiet",
+                padx=10, pady=3, size=8).pack(side="right", padx=(0, 6))
+            for i, step in enumerate(g["steps"], 1):
+                tk.Label(gci, text="%d. %s" % (i, step), bg=CARD, fg=SUB, font=F(9), anchor="w",
+                         justify="left", wraplength=860).pack(anchor="w", pady=(2, 0))
+        # 公网 bore
+        pb = tk.Frame(s2, bg=CARD2, highlightbackground=LINE, highlightthickness=1)
+        pb.pack(fill="x")
+        pbi = tk.Frame(pb, bg=CARD2)
+        pbi.pack(fill="x", padx=14, pady=12)
+        tk.Label(pbi, text="③ " + t("oj.net_pub"), bg=CARD2, fg=TXT, font=F(10, True), anchor="w").pack(anchor="w")
+        tk.Label(pbi, text=t("oj.net_pub_desc"), bg=CARD2, fg=SUB, font=F(9), anchor="w",
+                 justify="left", wraplength=880).pack(anchor="w", pady=(4, 8))
+        pr = tk.Frame(pbi, bg=CARD2)
+        pr.pack(fill="x")
+        tk.Label(pr, text=t("oj.srv_port"), bg=CARD2, fg=SUB, font=F(9)).pack(side="left", padx=(0, 6))
+        self._online_entry(pr, self.online_bore_port, 8).pack(side="left", ipady=4, padx=(0, 10))
+        self.online_bore_btn = Btn(pr, t("oj.net_bore_start"), self._online_toggle_bore,
+                                   kind="primary", padx=16, pady=5, size=9)
+        self.online_bore_btn.pack(side="left")
+        tk.Label(pr, textvariable=self.online_bore_var, bg=CARD2, fg=ACC, font=F(9, True),
+                 anchor="w").pack(side="left", fill="x", expand=True, padx=(12, 0))
+
+        # 3) 加入卡片
+        s3 = self._online_section(host, t("oj.card_title"), t("oj.card_desc"))
+        cr = tk.Frame(s3, bg=CARD)
+        cr.pack(fill="x")
+        tk.Label(cr, text=t("oj.card_host"), bg=CARD, fg=SUB, font=F(9)).pack(side="left", padx=(0, 6))
+        self._online_entry(cr, self.online_join_host, 16).pack(side="left", ipady=4, padx=(0, 12))
+        tk.Label(cr, text=t("oj.card_port"), bg=CARD, fg=SUB, font=F(9)).pack(side="left", padx=(0, 6))
+        self._online_entry(cr, self.online_join_port, 8).pack(side="left", ipady=4, padx=(0, 12))
+        tk.Label(cr, text=t("oj.card_ver"), bg=CARD, fg=SUB, font=F(9)).pack(side="left", padx=(0, 6))
+        self._online_entry(cr, self.online_join_ver, 10).pack(side="left", ipady=4, padx=(0, 12))
+        tk.Label(cr, text=t("oj.card_loader"), bg=CARD, fg=SUB, font=F(9)).pack(side="left", padx=(0, 6))
+        self._online_entry(cr, self.online_join_loader, 10).pack(side="left", ipady=4, padx=(0, 12))
+        tk.Checkbutton(cr, text=t("oj.card_online"), variable=self.online_join_online, bg=CARD,
+                       fg=SUB, selectcolor=CARD2, activebackground=CARD, activeforeground=TXT,
+                       font=F(9), bd=0, highlightthickness=0).pack(side="left", padx=(0, 12))
+        Btn(cr, t("oj.card_local"), self._online_fill_local, kind="ghost", padx=12, pady=5, size=9).pack(side="left")
+        Btn(cr, t("oj.card_gen"), self._online_gen_card, kind="primary", padx=16, pady=5, size=9).pack(side="left", padx=(8, 0))
+        tk.Label(s3, textvariable=self.online_local_info, bg=CARD, fg=DIM, font=F(8), anchor="w").pack(fill="x", pady=(8, 4))
+        self.online_card_text_w = tk.Text(s3, height=7, bg=CARD2, fg=TXT, relief="flat", bd=0,
+                                          font=F(9), wrap="word")
+        self.online_card_text_w.pack(fill="x")
+        self.online_card_text_w.configure(state="disabled")
+        tk.Label(s3, textvariable=self.online_card_result, bg=CARD, fg=SUB, font=F(9), anchor="w",
+                 justify="left", wraplength=900).pack(fill="x", pady=(8, 0))
+        br = tk.Frame(s3, bg=CARD)
+        br.pack(fill="x", pady=(10, 0))
+        Btn(br, t("oj.card_copy_addr"), lambda: self._online_copy(self.online_join_host.get() + ":" + self.online_join_port.get()),
+            kind="ghost", padx=14, pady=5, size=9).pack(side="left")
+        Btn(br, t("oj.card_copy_full"), lambda: self._online_copy(self.online_card_text),
+            kind="ghost", padx=14, pady=5, size=9).pack(side="left", padx=(8, 0))
+
+        # 4) 跨启动器兼容指引
+        s4 = self._online_section(host, t("oj.guide_title"), t("oj.guide_desc"))
+        for g in online.launcher_guides(i18n.get_lang()):
+            gc = tk.Frame(s4, bg=CARD2, highlightbackground=LINE, highlightthickness=1)
+            gc.pack(fill="x", pady=(0, 10))
+            gci = tk.Frame(gc, bg=CARD2)
+            gci.pack(fill="x", padx=14, pady=12)
+            tk.Label(gci, text=g["name"], bg=CARD2, fg=ACC if g["key"] == "fcl" else TXT,
+                     font=F(10, True), anchor="w").pack(anchor="w")
+            for i, step in enumerate(g["steps"], 1):
+                tk.Label(gci, text="%d. %s" % (i, step), bg=CARD2, fg=SUB, font=F(9), anchor="w",
+                         justify="left", wraplength=880).pack(anchor="w", pady=(2, 0))
+
+        # 5) 一键加入 / servers.dat
+        s5 = self._online_section(host, t("oj.join_title"), t("oj.join_desc"))
+        jr = tk.Frame(s5, bg=CARD)
+        jr.pack(fill="x")
+        Btn(jr, t("oj.join_export"), self._online_export_servers, kind="primary", padx=18, pady=6, size=9).pack(side="left")
+        tk.Label(s5, text=t("oj.join_note"), bg=CARD, fg=DIM, font=F(8), anchor="w",
+                 justify="left", wraplength=900).pack(fill="x", pady=(10, 0))
+
+    # ---------------- 开房间：集成服务端 ----------------
+    def _online_log(self, msg):
+        w = getattr(self, "online_srv_log", None)
+        if w is None:
+            return
+        try:
+            w.configure(state="normal")
+            w.insert("end", msg + "\n")
+            w.see("end")
+            w.configure(state="disabled")
+        except Exception:
+            pass
+
+    def _online_start_server(self):
+        if self.online_srv_proc is not None and self.online_srv_proc.poll() is None:
+            return
+        try:
+            port = int(self.online_srv_port.get())
+            mem = int(self.online_srv_mem.get())
+        except Exception:
+            messagebox.showwarning(t("oj.s1_title"), t("oj.srv_badport"), parent=self)
+            return
+        if not online.eula_accepted(self.game_dir):
+            self._online_ask_eula_then_start(port, mem)
+            return
+        self._online_launch_server(port, mem)
+
+    def _online_ask_eula_then_start(self, port, mem):
+        win = tk.Toplevel(self)
+        win.title(t("oj.srv_eula_title"))
+        win.configure(bg=BG)
+        win.transient(self)
+        win.grab_set()
+        win.geometry("560x360")
+        box = tk.Frame(win, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        box.pack(fill="both", expand=True, padx=18, pady=18)
+        tk.Label(box, text=t("oj.srv_eula_title"), bg=CARD, fg=TXT, font=F(13, True), anchor="w").pack(anchor="w", padx=18, pady=(16, 8))
+        txt = tk.Text(box, height=10, bg=CARD2, fg=SUB, relief="flat", bd=0, font=F(9), wrap="word")
+        txt.pack(fill="both", expand=True, padx=18)
+        txt.insert("1.0", t("oj.srv_eula_body"))
+        txt.configure(state="disabled")
+        row = tk.Frame(box, bg=CARD)
+        row.pack(fill="x", padx=18, pady=14)
+
+        def agree():
             try:
-                tunnel.stop_bore(self._tunnel_proc)
+                online.accept_eula(self.game_dir)
+            except Exception as e:
+                messagebox.showerror(t("oj.srv_eula_title"), str(e), parent=win)
+                return
+            win.destroy()
+            self._online_launch_server(port, mem)
+
+        Btn(row, t("oj.srv_eula_agree"), agree, kind="primary", padx=18, pady=7, size=10).pack(side="right")
+        Btn(row, t("oj.srv_eula_cancel"), win.destroy, kind="ghost", padx=16, pady=7, size=10).pack(side="right", padx=(0, 10))
+
+    def _online_launch_server(self, port, mem):
+        from . import java as jm
+        inst = self.current_inst()
+        exe = (inst.get("java_path") or self.cfg.get("java_path") or "").strip()
+        if not exe or not os.path.isfile(exe):
+            javas = jm.find_javas() or []
+            exe = jm.pick_java(17, all_javas=javas) or (javas[0]["path"] if javas else None)
+        if not exe:
+            messagebox.showerror(t("oj.s1_title"), t("oj.srv_nojava"), parent=self)
+            return
+        ver = self.online_srv_ver.get().strip() or online.DEFAULT_SERVER_VERSION
+        self.online_srv_done = False
+        self.online_srv_start_btn.disable(t("oj.srv_starting"))
+        self.online_srv_addr.set("—")
+        self._online_log("=== MC Lite 集成服务端 %s（端口 %d）===" % (ver, port))
+        self.set_status(t("oj.srv_starting"))
+
+        def work():
+            try:
+                jar = online.ensure_server_jar(
+                    self.game_dir, ver,
+                    status=lambda s: self.after(0, lambda s=s: self._online_log(s)),
+                )
+                self.after(0, lambda: self._online_log("server.jar: %s" % jar))
+                online.write_server_properties(self.game_dir, port=port, online_mode=False,
+                                               motd="MCLite LAN Server")
+                proc = online.start_server(
+                    self.game_dir, exe, port=port, memory_mb=mem, version=ver,
+                    on_line=lambda ln: self.after(0, lambda ln=ln: self._online_log(ln)),
+                    on_done=lambda ln: self.after(0, lambda ln=ln: self._online_server_done(port, ln)),
+                )
+                self.online_srv_proc = proc
+                self.after(0, lambda: self.set_status(t("oj.srv_running") % port))
+            except Exception as e:
+                err = str(e)
+                self.after(0, lambda: self._online_server_fail(err))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _online_server_done(self, port, line):
+        self.online_srv_done = True
+        addr = "127.0.0.1:%d" % port
+        self.online_srv_addr.set(addr)
+        self._online_log(t("oj.srv_ready") % addr)
+        self.set_status(t("oj.srv_ready") % addr)
+
+        def probe():
+            ok = online.wait_port_open("127.0.0.1", port, timeout=20)
+            self.after(0, lambda: self._online_log(
+                ("socket 连通性检查通过：127.0.0.1:%d 正在监听" % port) if ok
+                else ("端口暂未连通（可能仍在生成世界），请稍候" % port)))
+
+        threading.Thread(target=probe, daemon=True).start()
+
+    def _online_server_fail(self, err):
+        self.online_srv_proc = None
+        try:
+            self.online_srv_start_btn.set_kind("primary")
+            self.online_srv_start_btn.config(text=t("oj.srv_start"))
+        except Exception:
+            pass
+        self._online_log("ERROR: " + err)
+        self.set_status(err)
+        messagebox.showerror(t("oj.s1_title"), err, parent=self)
+
+    def _online_stop_server(self):
+        proc = self.online_srv_proc
+        if proc is None:
+            return
+        self.set_status(t("oj.srv_stopped"))
+
+        def work():
+            code = online.stop_server(proc)
+            self.after(0, lambda: self._online_server_stopped(code))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _online_server_stopped(self, code):
+        self.online_srv_proc = None
+        self.online_srv_done = False
+        try:
+            self.online_srv_start_btn.set_kind("primary")
+            self.online_srv_start_btn.config(text=t("oj.srv_start"))
+        except Exception:
+            pass
+        self.online_srv_addr.set("—")
+        self._online_log(t("oj.srv_stopped") + ("（exit=%s）" % code if code is not None else ""))
+
+    # ---------------- 客户端局域网检测 ----------------
+    def _online_detect_lan(self):
+        self.online_lan_var.set(t("oj.lan_detect") + "…")
+
+        def work():
+            from . import tunnel
+            java_ports = online.list_java_listening_ports()
+            log_port = None
+            try:
+                log_port, _p = tunnel.detect_lan_port(self.game_dir)
+            except Exception:
+                log_port = None
+            ips = online.list_local_ips()
+            lines = []
+            if java_ports:
+                lines.append(t("oj.lan_java_ports") + "：" + ", ".join(
+                    "%d(pid %d)" % (p["port"], p["pid"]) for p in java_ports))
+            if log_port:
+                lines.append(t("oj.lan_found") % log_port)
+                cand = online.lan_candidates(log_port)
+                if cand:
+                    lines.append("候选地址：" + "  ".join(c["address"] for c in cand))
+            elif java_ports:
+                p = java_ports[0]["port"]
+                cand = online.lan_candidates(p)
+                if cand:
+                    lines.append("候选地址：" + "  ".join(c["address"] for c in cand))
+            else:
+                lines.append(t("oj.lan_none"))
+            if ips and not any("候选地址" in x for x in lines):
+                lines.append("本机网卡 IP：" + ", ".join(ips))
+            self.after(0, lambda: self.online_lan_var.set("\n".join(lines)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _online_refresh_wifi(self):
+        try:
+            port = int(self.online_srv_port.get())
+        except Exception:
+            port = 25565
+        cand = online.lan_candidates(port)
+        self.online_wifi_var.set("\n".join(c["address"] for c in cand) if cand else "127.0.0.1:%d" % port)
+
+    # ---------------- 公网 bore ----------------
+    def _online_toggle_bore(self):
+        from . import tunnel
+        if self.online_bore_proc is not None:
+            try:
+                tunnel.stop_bore(self.online_bore_proc)
             except Exception:
                 pass
-            self._tunnel_proc = None
-            self.tunnel_btn.set_kind("primary")
-            self.tunnel_btn.config(text=t("online.start"))
-            self.addr_var.set("—")
+            self.online_bore_proc = None
+            self.online_bore_btn.set_kind("primary")
+            self.online_bore_btn.config(text=t("oj.net_bore_start"))
+            self.online_bore_var.set("—")
             self.set_status(t("online.stopped"))
             return
         try:
-            port = int(self.port_var.get())
+            port = int(self.online_bore_port.get())
         except Exception:
-            self.set_status(t("online.badport"))
+            messagebox.showwarning(t("oj.net_pub"), t("online.badport"), parent=self)
             return
         self.set_status(t("online.connecting"))
 
         def work():
             try:
                 def on_addr(a):
-                    self.addr_var.set(a)
+                    self.online_bore_var.set(a)
                     self.set_status(t("online.connected"))
-
                 proc = tunnel.start_bore(
                     port,
                     on_line=lambda s: self.after(0, lambda s=s: self.set_status(s)),
                     on_address=lambda a: self.after(0, lambda a=a: on_addr(a)),
                 )
-                self._tunnel_proc = proc
-                self.after(0, lambda: self.tunnel_btn.config(text=t("online.stop")) or self.tunnel_btn.set_kind("danger"))
+                self.online_bore_proc = proc
+                self.after(0, lambda: (self.online_bore_btn.config(text=t("oj.net_bore_stop")),
+                                        self.online_bore_btn.set_kind("danger")))
             except Exception as e:
                 err = str(e)
-                self.after(0, lambda: self.set_status(err))
+                self.after(0, lambda: (self.online_bore_var.set(t("oj.net_bore_unavail")),
+                                       self.set_status(err)))
 
         threading.Thread(target=work, daemon=True).start()
+
+    # ---------------- 加入卡片 ----------------
+    def _online_fill_local(self, silent=False):
+        ctx = self._online_local_ctx()
+        if ctx["mc_version"]:
+            self.online_join_ver.set(ctx["mc_version"])
+        if ctx["loader"]:
+            self.online_join_loader.set(ctx["loader"])
+        self.online_local_info.set(
+            "本地当前实例：版本 %s / 加载器 %s / mods 短哈希 %s" % (
+                ctx["mc_version"] or "—", ctx["loader"] or "原版", ctx["mods_hash"] or "—"))
+        if not silent:
+            self.set_status(t("oj.card_local"))
+
+    def _online_gen_card(self):
+        host = self.online_join_host.get().strip()
+        port = self.online_join_port.get().strip() or "25565"
+        if not host:
+            messagebox.showwarning(t("oj.card_title"), t("oj.card_host"), parent=self)
+            return
+        ver = self.online_join_ver.get().strip()
+        loader = self.online_join_loader.get().strip()
+        online_mode = bool(self.online_join_online.get())
+        mh = online.mods_short_hash(self.game_dir)["hash"]
+        card = online.build_join_card(host, port, ver, loader, mh, online_mode)
+        self.online_card_text = card
+        w = self.online_card_text_w
+        w.configure(state="normal")
+        w.delete("1.0", "end")
+        w.insert("1.0", card)
+        w.configure(state="disabled")
+        local = self._online_local_ctx()
+        chk = online.consistency_check(local, {"mc_version": ver, "loader": loader, "mods_hash": mh})
+        if chk["ok"]:
+            self.online_card_result.set("✓ " + t("oj.card_consistent"))
+        else:
+            self.online_card_result.set("⚠ " + t("oj.card_mismatch") + "\n" +
+                                        "\n".join("• " + i["msg"] for i in chk["issues"]))
+        self.set_status(t("oj.card_generated"))
+
+    # ---------------- servers.dat 导出 ----------------
+    def _online_export_servers(self):
+        host = self.online_join_host.get().strip()
+        port = self.online_join_port.get().strip() or "25565"
+        if not host:
+            messagebox.showwarning(t("oj.join_title"), t("oj.card_host"), parent=self)
+            return
+        ver = self.online_join_ver.get().strip()
+        loader = self.online_join_loader.get().strip()
+        mh = online.mods_short_hash(self.game_dir)["hash"]
+        local = self._online_local_ctx()
+        chk = online.consistency_check(local, {"mc_version": ver, "loader": loader, "mods_hash": mh})
+        if not chk["ok"]:
+            msg = "\n".join("• " + i["msg"] for i in chk["issues"])
+            if not messagebox.askyesno(t("oj.join_title"), t("oj.join_mismatch") + "\n\n" + msg +
+                                       "\n\n" + t("oj.join_export"), parent=self):
+                return
+        try:
+            res = online.export_servers_dat(self.game_dir, host, port,
+                                            name="MCLite 加入 %s" % host)
+        except Exception as e:
+            messagebox.showerror(t("oj.join_title"), str(e), parent=self)
+            return
+        if res["readback_ok"]:
+            messagebox.showinfo(t("oj.join_title"),
+                                t("oj.join_exported") % (res["path"], res["ip"], len(res["entries"])),
+                                parent=self)
+        else:
+            messagebox.showerror(t("oj.join_title"), "servers.dat 读回校验失败", parent=self)
+
+    # ---------------- mclite://join 协议接线 ----------------
+    def _online_join_from_protocol(self, host, port):
+        try:
+            self.show_page("online")
+        except Exception:
+            pass
+        self.online_join_host.set(host or "")
+        self.online_join_port.set(str(port or "25565"))
+        self._online_fill_local(silent=True)
+        ver = self.online_join_ver.get().strip()
+        loader = self.online_join_loader.get().strip()
+        mh = online.mods_short_hash(self.game_dir)["hash"]
+        local = self._online_local_ctx()
+        chk = online.consistency_check(local, {"mc_version": ver, "loader": loader, "mods_hash": mh})
+
+        win = tk.Toplevel(self)
+        win.title(t("oj.join_dialog_title"))
+        win.configure(bg=BG)
+        win.transient(self)
+        win.grab_set()
+        win.geometry("520x340")
+        box = tk.Frame(win, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        box.pack(fill="both", expand=True, padx=18, pady=18)
+        tk.Label(box, text=t("oj.join_dialog_title"), bg=CARD, fg=TXT, font=F(13, True), anchor="w").pack(anchor="w", padx=18, pady=(16, 8))
+        body = t("oj.join_dialog_body") % ("%s:%s" % (host, port or 25565))
+        if chk["ok"]:
+            body += "\n\n✓ " + t("oj.card_consistent")
+        else:
+            body += "\n\n⚠ " + t("oj.card_mismatch") + "\n" + "\n".join("• " + i["msg"] for i in chk["issues"])
+        tk.Label(box, text=body, bg=CARD, fg=SUB, font=F(9), anchor="w", justify="left",
+                 wraplength=470).pack(anchor="w", padx=18)
+        row = tk.Frame(box, bg=CARD)
+        row.pack(fill="x", padx=18, pady=16)
+
+        def do_export(launch_after):
+            try:
+                res = online.export_servers_dat(self.game_dir, host, port or 25565,
+                                                name="MCLite 加入 %s" % host)
+            except Exception as e:
+                messagebox.showerror(t("oj.join_dialog_title"), str(e), parent=win)
+                return
+            if not res["readback_ok"]:
+                messagebox.showerror(t("oj.join_dialog_title"), "servers.dat 读回校验失败", parent=win)
+                return
+            win.destroy()
+            self.set_status(t("oj.join_exported") % (res["path"], res["ip"], len(res["entries"])))
+            if launch_after:
+                vid = self.current_inst().get("last_version") or self.cfg.get("last_version") or ""
+                if vid:
+                    self.launch_version(vid)
+                else:
+                    messagebox.showinfo(t("oj.join_dialog_title"), t("oj.join_launching"), parent=self)
+
+        Btn(row, t("oj.join_launch"), lambda: do_export(True), kind="primary", padx=16, pady=7, size=10).pack(side="right")
+        Btn(row, t("oj.join_only"), lambda: do_export(False), kind="ghost", padx=14, pady=7, size=10).pack(side="right", padx=(0, 10))
+        Btn(row, t("oj.join_cancel"), win.destroy, kind="quiet", padx=14, pady=7, size=10).pack(side="right", padx=(0, 10))
 
     # ------------------------------------------------------------ 投票
     def _page_poll(self):
@@ -3746,7 +4222,7 @@ class App(tk.Tk):
 
         # 关于
         box = section(t("settings.about"))
-        tk.Label(box, text="MC Lite 正式版 v1.8.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
+        tk.Label(box, text="MC Lite 正式版 v1.9.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
                  font=F(10, True), anchor="w").pack(anchor="w")
         tk.Label(box, text=t("settings.about.text"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", pady=(4, 0))
 
@@ -3847,9 +4323,8 @@ class App(tk.Tk):
                 return
             self.launch_version(vid)
         else:
-            messagebox.showinfo(
-                t("perf.protocol"),
-                t("perf.join.todo") % (p["host"], p["port"]))
+            # 批次7：mclite://join 真正接入「写 servers.dat + 启动」流程
+            self._online_join_from_protocol(p["host"], p.get("port") or "25565")
 
     def _set_download_source(self, src):
         self.cfg["download_source"] = src

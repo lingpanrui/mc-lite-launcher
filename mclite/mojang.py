@@ -438,7 +438,7 @@ def _arg_value(item, params):
 
 
 def build_command(game_dir, version_id, java_exe, username, memory_mb, width=854, height=480,
-                  launcher_name="MCLite", launcher_version="1.8.0", auth=None, extra_jvm=None):
+                  launcher_name="MCLite", launcher_version="1.9.0", auth=None, extra_jvm=None):
     vj, root_id = resolve_version(game_dir, version_id)
     assets_dir = os.path.join(game_dir, "assets")
     libs_dir = os.path.join(game_dir, "libraries")

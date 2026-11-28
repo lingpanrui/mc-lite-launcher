@@ -364,8 +364,8 @@ STRINGS = {
     # ---------------------------------------------------------------- 联机
     "online.title": ("联机", "Multiplayer"),
     "online.sub": (
-        "开一条免费隧道，把地址发给好友。",
-        "Open a free tunnel and hand the address to your friends.",
+        "跨启动器联机：开房间、同 WiFi/虚拟局域网/公网三路径、加入卡片与 servers.dat 一键加入。",
+        "Cross-launcher multiplayer: host a room, LAN/VPN/public paths, join card and one-click servers.dat.",
     ),
     "online.port": ("游戏端口", "Game port"),
     "online.detect": ("检测端口", "Detect port"),
@@ -377,6 +377,114 @@ STRINGS = {
         "使用 bore 公共服务器，无需注册；延迟取决于线路质量。",
         "Public bore servers, no signup required; latency depends on the route.",
     ),
+
+    # ---------------------------------------------------------------- 联机中心（批次7）
+    "oj.s1_title": ("① 开房间（主机侧）", "① Host a room"),
+    "oj.s1_desc": (
+        "两种方式：集成服务端（真下载官方 server.jar，需先同意 EULA）或把游戏内「对局域网开放」的端口检测出来。",
+        "Two ways: integrated server (downloads official server.jar, EULA consent required) or detect the LAN-open port from the game.",
+    ),
+    "oj.srv_ver": ("服务端版本", "Server ver"),
+    "oj.srv_port": ("端口", "Port"),
+    "oj.srv_mem": ("内存MB", "Mem MB"),
+    "oj.srv_start": ("下载并启动服务端", "Download & start server"),
+    "oj.srv_stop": ("停止服务端", "Stop server"),
+    "oj.srv_starting": ("正在下载/启动服务端…", "Downloading/starting server…"),
+    "oj.srv_running": ("服务端运行中，端口 %d", "Server running on port %d"),
+    "oj.srv_ready": ("服务端已就绪：%s（把该地址发给好友）", "Server ready: %s (share this address)"),
+    "oj.srv_stopped": ("服务端已停止", "Server stopped"),
+    "oj.srv_badport": ("端口或内存格式不正确", "Invalid port or memory value"),
+    "oj.srv_nojava": ("未找到 Java 17+，无法启动服务端", "Java 17+ not found; cannot start server"),
+    "oj.srv_eula_title": ("Minecraft 服务端 EULA 同意", "Minecraft Server EULA Consent"),
+    "oj.srv_eula_body": (
+        "启动官方服务端前，必须由你本人同意 Minecraft 最终用户许可协议（EULA）。\n\n"
+        "· 协议全文：https://www.minecraft.net/eula\n"
+        "· 点击「我已阅读并同意 EULA」后，本启动器才会在服务端目录写入 eula.txt（eula=true）；\n"
+        "· 本启动器不会替你静默同意，也不会在你未点击前写入该文件。\n\n"
+        "同意后将自动下载 1.20.1 官方 server.jar 并以离线模式（online-mode=false）启动。",
+        "Before starting the official server, you must accept the Minecraft EULA yourself.\n\n"
+        "· Full text: https://www.minecraft.net/eula\n"
+        "· Only after you click Agree will the launcher write eula.txt (eula=true);\n"
+        "· It will never accept silently or write the file before your click.\n\n"
+        "After agreeing, it downloads the 1.20.1 server.jar and starts in offline mode (online-mode=false).",
+    ),
+    "oj.srv_eula_agree": ("我已阅读并同意 EULA", "I have read and agree to the EULA"),
+    "oj.srv_eula_cancel": ("取消", "Cancel"),
+    "oj.lan_title": ("客户端局域网端口检测", "Client LAN port detection"),
+    "oj.lan_detect": ("检测游戏局域网端口", "Detect game LAN port"),
+    "oj.lan_copy": ("复制候选地址", "Copy candidate address"),
+    "oj.lan_none": ("未检测到游戏监听端口。请先在游戏内按 Esc →「对局域网开放」，再点检测。",
+                    "No game listening port found. In-game press Esc -> Open to LAN, then detect again."),
+    "oj.lan_found": ("游戏已对局域网开放，端口：%d", "Game opened to LAN on port: %d"),
+    "oj.lan_java_ports": ("本机 java 监听端口", "Java listening ports"),
+    "oj.lan_desc": (
+        "若游戏内已「对局域网开放」，这里会显示端口与候选内网地址；检测不到时请先在游戏内开放局域网。",
+        "After Open to LAN in-game, the port and candidate LAN addresses appear here; if none, open to LAN first.",
+    ),
+    "oj.net_title": ("② 三种网络路径（自动按场景选择）", "② Three network paths"),
+    "oj.net_desc": (
+        "同 WiFi 直接用内网 IP；异地用免费虚拟局域网；需要公网地址再用 bore 隧道。全部免费、无需自建中转服务器。",
+        "Same WiFi uses LAN IP; remote uses a free virtual LAN; public address via bore tunnel. All free, no self-hosted relay.",
+    ),
+    "oj.net_wifi": ("同一 WiFi / 局域网", "Same WiFi / LAN"),
+    "oj.net_wifi_desc": ("房主与好友连同一个路由器/WiFi 时，直接把下面的内网 IP:端口 发给好友即可（多网卡会全部列出）。",
+                         "When host and friends share the same router/WiFi, send the LAN IP:port below (all NICs listed)."),
+    "oj.net_refresh": ("刷新网卡 IP", "Refresh NIC IPs"),
+    "oj.net_vlan": ("异地联机（免费虚拟局域网）", "Remote play (free virtual LAN)"),
+    "oj.net_vlan_desc": ("不在同一网络时，双方都加入同一个免费虚拟局域网（ZeroTier / Tailscale / Radmin VPN），无需公网 IP、无需端口映射。",
+                         "When apart, both join the same free virtual LAN (ZeroTier / Tailscale / Radmin VPN); no public IP or port forwarding."),
+    "oj.net_pub": ("需要公网地址（bore 隧道）", "Public address (bore tunnel)"),
+    "oj.net_pub_desc": ("bore 会把本机端口映射到公共中转地址；若 bore 不可用，请改用上面的虚拟局域网方案。",
+                         "bore maps a local port to a public relay address; if bore is unavailable, use the virtual LAN above."),
+    "oj.net_bore_start": ("开启 bore 隧道", "Start bore tunnel"),
+    "oj.net_bore_stop": ("关闭 bore 隧道", "Stop bore tunnel"),
+    "oj.net_bore_unavail": ("公网中转不可用，请使用虚拟局域网方案", "Public relay unavailable; use a virtual LAN instead"),
+    "oj.card_title": ("③ 加入卡片（发给好友）", "③ Join card (send to friends)"),
+    "oj.card_desc": ("填写房主地址与目标版本/加载器，生成可复制的加入说明；模组短哈希用于连接前一致性核对。",
+                    "Fill host address and target version/loader, generate a copyable join note; the mod hash is for pre-join consistency."),
+    "oj.card_host": ("房主 IP/域名", "Host"),
+    "oj.card_port": ("端口", "Port"),
+    "oj.card_ver": ("MC 版本", "MC version"),
+    "oj.card_loader": ("加载器", "Loader"),
+    "oj.card_online": ("正版验证服 online-mode=true", "Premium server online-mode=true"),
+    "oj.card_local": ("读取当前实例", "Read current instance"),
+    "oj.card_gen": ("生成加入卡片", "Generate join card"),
+    "oj.card_copy_addr": ("复制地址", "Copy address"),
+    "oj.card_copy_full": ("复制完整说明", "Copy full note"),
+    "oj.card_generated": ("已生成加入卡片", "Join card generated"),
+    "oj.card_consistent": ("与当前实例一致，可放心连接。", "Matches the current instance; safe to connect."),
+    "oj.card_mismatch": ("检测到不一致，连上可能崩溃：", "Mismatch detected; connecting may crash:"),
+    "oj.guide_title": ("④ 跨启动器兼容指引", "④ Cross-launcher guide"),
+    "oj.guide_desc": ("Java 版联机只认 IP:端口，与启动器品牌无关。以下是四家启动器的具体菜单路径。",
+                       "Java multiplayer only uses IP:port, independent of launcher brand. Menu paths for four launchers below."),
+    "oj.join_title": ("⑤ 一键加入 / 导出 servers.dat", "⑤ One-click join / export servers.dat"),
+    "oj.join_desc": (
+        "把服务器写入当前实例根目录的 servers.dat（Java 版标准 NBT 格式，写完用同一解析器读回校验）；"
+        "也可用 mclite://join?host=&port= 协议直接唤起本程序并写入、启动。",
+        "Writes the server into servers.dat at the current instance root (standard Java NBT, read back to verify); "
+        "mclite://join?host=&port= also launches the app, writes it and starts the game.",
+    ),
+    "oj.join_export": ("导出 servers.dat 到当前实例", "Export servers.dat to current instance"),
+    "oj.join_exported": ("已写入并读回校验通过：\n%s\n地址 %s，条目数 %d",
+                         "Written and read back OK:\n%s\nAddress %s, entries %d"),
+    "oj.join_launch": ("写入并启动游戏", "Write & launch game"),
+    "oj.join_only": ("仅写入 servers.dat", "Write servers.dat only"),
+    "oj.join_cancel": ("取消", "Cancel"),
+    "oj.join_dialog_title": ("一键加入服务器", "One-click join server"),
+    "oj.join_dialog_body": ("即将把服务器 %s 写入当前实例的 servers.dat。",
+                            "About to write server %s into the current instance's servers.dat."),
+    "oj.join_launching": ("未找到当前实例的最后启动版本，请先在版本页启动一次。",
+                          "No last launched version for this instance; launch it once from the Versions page."),
+    "oj.join_note": (
+        "说明：servers.dat 为 gzip NBT，根 Compound 内含 list servers，每项含 name/ip/hidden，与 Java 版格式一致；"
+        "写入后可在游戏「多人游戏」列表直接看到该服务器。本功能不做 6 位房间码中转（需要服务器成本，明确不做）。",
+        "Note: servers.dat is gzip NBT with root Compound -> list servers (name/ip/hidden), matching Java format; "
+        "it appears in the Multiplayer list. A 6-digit room-code relay is intentionally NOT provided (requires server cost).",
+    ),
+    "oj.join_mismatch": ("连接前一致性校验未通过，仍要写入吗？", "Pre-join consistency check failed; write anyway?"),
+    "oj.common_copy": ("复制", "Copy"),
+    "oj.common_open": ("打开官网", "Open site"),
+    "oj.common_refresh": ("刷新", "Refresh"),
 
     # ---------------------------------------------------------------- 投票
     "poll.title": ("功能投票", "Feature voting"),
@@ -473,8 +581,8 @@ STRINGS = {
     "settings.datadir": ("数据目录", "Data folder"),
     "settings.about": ("关于", "About"),
     "settings.about.text": (
-        "MC Lite 正式版 v1.8.0 · MIT 协议 · 开源在 GitHub",
-        "MC Lite Official v1.8.0 · MIT licensed · open source on GitHub",
+        "MC Lite 正式版 v1.9.0 · MIT 协议 · 开源在 GitHub",
+        "MC Lite Official v1.9.0 · MIT licensed · open source on GitHub",
     ),
     "settings.autodetect": (
         "留空时启动器会自动探测本机 Java。",
@@ -490,7 +598,7 @@ STRINGS = {
     "theme.system": ("跟随系统", "Follow system"),
 
     # ---------------------------------------------------------------- 补全
-    "common.v2badge": ("正式版 v1.8.0", "Official v1.8.0"),
+    "common.v2badge": ("正式版 v1.9.0", "Official v1.9.0"),
     "common.browse": ("浏览", "Browse"),
     "common.saved": ("已保存", "Saved"),
     "common.badinput": ("输入无效", "Invalid input"),
