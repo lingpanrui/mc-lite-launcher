@@ -473,8 +473,8 @@ STRINGS = {
     "settings.datadir": ("数据目录", "Data folder"),
     "settings.about": ("关于", "About"),
     "settings.about.text": (
-        "MC Lite 正式版 v1.7.0 · MIT 协议 · 开源在 GitHub",
-        "MC Lite Official v1.7.0 · MIT licensed · open source on GitHub",
+        "MC Lite 正式版 v1.8.0 · MIT 协议 · 开源在 GitHub",
+        "MC Lite Official v1.8.0 · MIT licensed · open source on GitHub",
     ),
     "settings.autodetect": (
         "留空时启动器会自动探测本机 Java。",
@@ -490,7 +490,7 @@ STRINGS = {
     "theme.system": ("跟随系统", "Follow system"),
 
     # ---------------------------------------------------------------- 补全
-    "common.v2badge": ("正式版 v1.7.0", "Official v1.7.0"),
+    "common.v2badge": ("正式版 v1.8.0", "Official v1.8.0"),
     "common.browse": ("浏览", "Browse"),
     "common.saved": ("已保存", "Saved"),
     "common.badinput": ("输入无效", "Invalid input"),
@@ -700,6 +700,7 @@ STRINGS = {
     "local.game_dir": ("实例目录：%s", "Instance folder: %s"),
     "local.import": ("选择文件导入…", "Import files…"),
     "local.open_dir": ("打开当前目录", "Open folder"),
+    "local.open_fail": ("打开目录失败：%s", "Failed to open folder: %s"),
     "local.refresh": ("刷新", "Refresh"),
     "local.drag_hint": ("可直接把 .jar/.zip 拖进窗口安装；也可用左侧按钮选择文件。",
                         "Drag .jar/.zip into the window to install, or use the button."),
@@ -737,6 +738,77 @@ STRINGS = {
     "local.drag_received": ("收到拖放文件 %d 个，正在导入…", "Received %d dropped file(s), importing…"),
     "content.cf.goto_local": ("前往「已安装」本地导入", "Go to Installed import"),
     "content.world.manage_saves": ("管理本地存档", "Manage local saves"),
+
+    # ------------------------------------------------------------ 批次6：冲突预检 + 迁移
+    "content.tab.conflict": ("冲突预检", "Conflict Check"),
+    "conflict.title": ("装前冲突预检", "Pre-install Conflict Check"),
+    "conflict.subtitle": ("扫描当前实例 mods/ 下启用与已禁用的模组，检出重复 id、缺失前置、版本区间、加载器与 Java 不匹配；"
+                          "每条都给出可执行建议，可一键禁用或从 Modrinth 补装依赖。",
+                          "Scans enabled and disabled mods in this instance's mods/ for duplicate ids, missing deps, "
+                          "version ranges, loader and Java mismatches, with one-click fixes."),
+    "conflict.rescan": ("立即扫描 / 复检", "Scan / Re-check"),
+    "conflict.open_mods": ("打开 mods 目录", "Open mods folder"),
+    "conflict.scanning": ("正在读取模组元数据并比对依赖…", "Reading mod metadata and checking dependencies…"),
+    "conflict.scan_fail": ("扫描失败：%s", "Scan failed: %s"),
+    "conflict.summary.err": ("发现 %d 个错误、%d 个警告、%d 条提示，建议先处理错误项。",
+                             "%d errors, %d warnings, %d info — fix errors first."),
+    "conflict.summary.warn": ("%d 个警告、%d 条提示，可按需处理。", "%d warnings, %d info."),
+    "conflict.summary.ok": ("未发现冲突（共扫描 %d 个模组文件）。", "No conflicts found (%d mod files scanned)."),
+    "conflict.none": ("当前实例没有检出冲突。装新模组后可随时回来复检。",
+                     "No conflicts detected. Re-check after adding mods."),
+    "conflict.sev.error": ("错误", "ERROR"),
+    "conflict.sev.warn": ("警告", "WARN"),
+    "conflict.sev.info": ("提示", "INFO"),
+    "conflict.fix.disable": ("一键禁用冲突模组", "Disable conflicting mod"),
+    "conflict.fix.enable": ("启用该前置", "Enable this dependency"),
+    "conflict.fix.install": ("从 Modrinth 补装依赖", "Install dependency from Modrinth"),
+    "conflict.fix.done": ("修复已执行，正在重新预检…", "Fix applied, re-checking…"),
+    "conflict.fix.fail": ("修复失败：%s", "Fix failed: %s"),
+    "conflict.install.title": ("补装缺失依赖", "Install missing dependency"),
+    "conflict.install.wait": ("正在从 Modrinth 解析并下载匹配版本，请稍候…",
+                              "Resolving and downloading a matching build from Modrinth…"),
+    "conflict.install.ok": ("已补装：%s，正在重新预检。", "Installed %s, re-checking."),
+    "conflict.after_import.title": ("导入完成，是否立即预检？", "Import done — run conflict check?"),
+    "conflict.after_import.body": ("检测到刚导入了模组 jar。是否立即对当前实例做一次冲突预检，"
+                                   "提前发现缺前置 / 加载器不匹配等问题？",
+                                   "Mod jar(s) imported. Run a conflict check now to catch missing deps or loader mismatches?"),
+    "conflict.loader.unknown": ("加载器未知", "Loader unknown"),
+    "conflict.mc.unknown": ("MC 版本未知", "MC version unknown"),
+    "conflict.java.unknown": ("Java 未知", "Java unknown"),
+    "crash.precheck.title": ("同一实例的装前预检", "Pre-install check for this instance"),
+    "crash.precheck.summary": ("预检：%d 个错误、%d 个警告（可在「内容 → 冲突预检」里一键修复）。",
+                               "Pre-check: %d errors, %d warnings (fix in Content → Conflict Check)."),
+    "inst.migrate": ("从其他启动器迁移", "Migrate from launcher"),
+    "migrate.title": ("从其他启动器一键迁移", "Migrate from another launcher"),
+    "migrate.sub": ("只读扫描 HMCL / PCL2 / BHL / PrismLauncher / FCL 的版本目录与配置，"
+                    "勾选后导入为 MCLite 新实例。默认真实拷贝版本、模组与存档；libraries/assets 体积大，"
+                    "默认以目录联接复用原目录（不复制、不改动源目录），也可选择引用原目录。",
+                    "Read-only scan of HMCL/PCL2/BHL/PrismLauncher/FCL version folders. "
+                    "Copy mode duplicates versions, mods and saves; large libraries/assets are junction-linked by default. "
+                    "Reference mode points at the original folder without copying."),
+    "migrate.scanning": ("正在扫描本机启动器与版本目录…", "Scanning launchers and version folders…"),
+    "migrate.scanfail": ("扫描失败：%s", "Scan failed: %s"),
+    "migrate.detected": ("已检测到", "detected"),
+    "migrate.notfound": ("未检测到", "not detected"),
+    "migrate.empty": ("没有在已知启动器目录里找到可导入的版本。若启动器装在非默认位置，"
+                      "可先在该启动器设置里查看游戏目录，再用「引用原目录」方式导入。",
+                      "No importable versions found in known launcher folders. If installed elsewhere, "
+                      "use reference mode and point at the game folder."),
+    "migrate.found": ("找到 %d 个可导入版本（勾选后导入为新实例）：",
+                      "%d importable version(s) found (tick to import as a new instance):"),
+    "migrate.meta": ("MC %s · 版本目录 %s · 模组 %d 个 · 存档 %d 个 · 来源 %s",
+                     "MC %s · version folder %s · %d mods · %d saves · from %s"),
+    "migrate.mode.copy": ("拷贝到新实例（默认，独立可用）", "Copy to new instance (default, standalone)"),
+    "migrate.mode.ref": ("引用原目录（不复制，省空间）", "Reference original folder (no copy)"),
+    "migrate.copy.big": ("同时完整复制 libraries/assets（占用更大但完全独立）",
+                         "Also fully copy libraries/assets (larger, fully standalone)"),
+    "migrate.import": ("导入选中版本", "Import selected"),
+    "migrate.rescan": ("重新扫描", "Rescan"),
+    "migrate.importing": ("正在导入，大存档可能需要一些时间…", "Importing; large saves may take a while…"),
+    "migrate.pick": ("请先勾选至少一个要导入的版本。", "Tick at least one version to import."),
+    "migrate.done": ("成功导入 %d 个实例：%s", "Imported %d instance(s): %s"),
+    "migrate.partial": ("成功 %d 个，失败 %d 个：", "%d succeeded, %d failed:"),
+    "migrate.fail": ("导入失败，请查看提示。", "Import failed; see the message."),
 
     "online.portfound": ("检测到端口 %s", "Detected port %s"),
     "online.portmissing": (

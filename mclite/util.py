@@ -41,7 +41,7 @@ DEFAULT_CONFIG = {
     # v1.4.0 账户系统（离线 / 外置 / 微软）
     "accounts": [],
     "current_account": "",
-    # v1.7.0 下载源：auto=官方优先失败回退 BMCL；official / bmcl 强制单源
+    # v1.8.0 下载源：auto=官方优先失败回退 BMCL；official / bmcl 强制单源
     "download_source": "auto",
 }
 

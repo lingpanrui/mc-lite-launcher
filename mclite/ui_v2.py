@@ -17,7 +17,7 @@ from tkinter import filedialog, messagebox, simpledialog
 
 from . import i18n, imgcache, modrinth, poll, util
 from . import doctor, instances, accounts, forge, quilt, contenthub, localcontent
-from . import downloader, sharedpool, prewarm, protocol
+from . import downloader, sharedpool, prewarm, protocol, conflictcheck, migration
 from . import theme
 from .i18n import t
 
@@ -61,6 +61,7 @@ CONTENT_TYPES = [
 # 非检索类资源中心页：已安装（本地内容管理）/ 世界（本地入口）/ CurseForge（诚实标注，不做假搜索）
 CONTENT_EXTRA_NAV = [
     ("local", "content.tab.local"),
+    ("conflict", "content.tab.conflict"),
     ("world", "content.tab.world"),
     ("curseforge", "content.tab.cf"),
 ]
@@ -808,6 +809,16 @@ class App(tk.Tk):
                 tk.Label(body, text=f["fix"], bg=CARD, fg="#96f0be", font=F(9), anchor="w",
                          wraplength=560, justify="left").pack(anchor="w")
 
+        # 批次6：模组类崩溃（mixin / dep_missing / nomethod）附带同一实例的装前预检
+        if any(f.get("action") == "mod" for f in findings):
+            pre_head = tk.Frame(parent, bg=BG)
+            pre_head.pack(fill="x", pady=(8, 4))
+            tk.Label(pre_head, text=t("crash.precheck.title"), bg=BG, fg=ACC,
+                     font=F(11, True), anchor="w").pack(side="left")
+            pre_host = tk.Frame(parent, bg=BG)
+            pre_host.pack(fill="x", pady=(0, 10))
+            self._crash_precheck(pre_host, vid)
+
         tail = result.get("tail") or []
         if tail:
             tk.Label(parent, text=t("crash.tail"), bg=BG, fg=DIM, font=F(8, True),
@@ -866,6 +877,8 @@ class App(tk.Tk):
     def _page_instances(self):
         Btn(self.head_right, t("inst.import"), self._inst_import, kind="ghost",
             padx=14, pady=6, size=9).pack(side="right")
+        Btn(self.head_right, t("inst.migrate"), self._inst_migrate_dialog, kind="ghost",
+            padx=14, pady=6, size=9).pack(side="right", padx=(0, 8))
         Btn(self.head_right, t("inst.new"), self._inst_new_dialog, kind="primary",
             padx=14, pady=6, size=9).pack(side="right", padx=(0, 8))
 
@@ -1264,6 +1277,176 @@ class App(tk.Tk):
         else:
             self.show_page("instances")
             messagebox.showinfo(t("common.v2badge"), t("inst.import.done") % self.inst_display_name(inst))
+
+    # ------------------------------------------------------------ 批次6：跨启动器迁移
+    def _inst_migrate_dialog(self):
+        win = tk.Toplevel(self)
+        win.title(t("migrate.title"))
+        win.configure(bg=BG)
+        win.geometry("920x680")
+        win.minsize(780, 540)
+        win.transient(self)
+
+        head = tk.Frame(win, bg=BG)
+        head.pack(fill="x", padx=22, pady=(18, 4))
+        tk.Label(head, text=t("migrate.title"), bg=BG, fg=TXT, font=F(15, True), anchor="w").pack(anchor="w")
+        tk.Label(head, text=t("migrate.sub"), bg=BG, fg=SUB, font=F(9), anchor="w",
+                 justify="left", wraplength=840).pack(anchor="w", pady=(4, 0))
+
+        launch_host = tk.Frame(win, bg=BG)
+        launch_host.pack(fill="x", padx=22, pady=(8, 4))
+
+        cand_card = tk.Frame(win, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        cand_card.pack(fill="both", expand=True, padx=22, pady=8)
+        self.mig_area = ScrollArea(cand_card, bg=CARD)
+        self.mig_area.pack(fill="both", expand=True, padx=8, pady=8)
+
+        bottom = tk.Frame(win, bg=BG)
+        bottom.pack(fill="x", padx=22, pady=(0, 16))
+        opt = tk.Frame(bottom, bg=BG)
+        opt.pack(fill="x")
+        self.mig_mode = tk.StringVar(value="copy")
+        tk.Radiobutton(opt, text=t("migrate.mode.copy"), variable=self.mig_mode, value="copy",
+                       bg=BG, fg=TXT, selectcolor=CARD2, activebackground=BG,
+                       activeforeground=TXT, font=F(9), relief="flat", bd=0,
+                       highlightthickness=0).pack(side="left", padx=(0, 16))
+        tk.Radiobutton(opt, text=t("migrate.mode.ref"), variable=self.mig_mode, value="reference",
+                       bg=BG, fg=TXT, selectcolor=CARD2, activebackground=BG,
+                       activeforeground=TXT, font=F(9), relief="flat", bd=0,
+                       highlightthickness=0).pack(side="left", padx=(0, 16))
+        self.mig_big = tk.BooleanVar(value=False)
+        tk.Checkbutton(opt, text=t("migrate.copy.big"), variable=self.mig_big,
+                       bg=BG, fg=SUB, selectcolor=CARD2, activebackground=BG,
+                       activeforeground=TXT, font=F(8), relief="flat", bd=0,
+                       highlightthickness=0).pack(side="left")
+        self.mig_status = tk.Label(bottom, text="", bg=BG, fg=SUB, font=F(8), anchor="w")
+        self.mig_status.pack(fill="x", pady=(8, 6))
+        btnrow = tk.Frame(bottom, bg=BG)
+        btnrow.pack(fill="x")
+        self.mig_import_btn = Btn(btnrow, t("migrate.import"), lambda: self._mig_import(win),
+                                  kind="primary", padx=22, pady=8, size=10)
+        self.mig_import_btn.pack(side="left")
+        Btn(btnrow, t("migrate.rescan"), lambda: self._mig_scan(launch_host),
+            kind="ghost", padx=16, pady=8, size=9).pack(side="left", padx=(8, 0))
+        Btn(btnrow, t("common.close"), win.destroy, kind="quiet", padx=16, pady=8, size=9).pack(side="right")
+
+        self.mig_candidates = []
+        self.mig_vars = {}
+        self._mig_scan(launch_host)
+        return win
+
+    def _mig_scan(self, launch_host):
+        for w in launch_host.winfo_children():
+            w.destroy()
+        tk.Label(launch_host, text=t("migrate.scanning"), bg=BG, fg=SUB, font=F(9)).pack(anchor="w")
+        area = self.mig_area
+        area.clear()
+        tk.Label(area.inner, text=t("migrate.scanning"), bg=CARD, fg=SUB, font=F(10)).pack(anchor="w", pady=20)
+
+        def work():
+            try:
+                data = migration.scan_all()
+                self.after(0, lambda: self._mig_render(launch_host, data))
+            except Exception as e:
+                self.after(0, lambda: self._mig_render_error(launch_host, str(e)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _mig_render_error(self, launch_host, err):
+        for w in launch_host.winfo_children():
+            w.destroy()
+        tk.Label(launch_host, text=t("migrate.scanfail") % err, bg=BG, fg=DANGER,
+                 font=F(9), anchor="w").pack(anchor="w")
+
+    def _mig_render(self, launch_host, data):
+        for w in launch_host.winfo_children():
+            w.destroy()
+        for lp in data["launchers"]:
+            row = tk.Frame(launch_host, bg=CARD2, highlightbackground=LINE, highlightthickness=1)
+            row.pack(fill="x", pady=3)
+            dot = "●" if lp["installed"] else "○"
+            dot_color = ACC if lp["installed"] else DIM
+            tk.Label(row, text=dot, bg=CARD2, fg=dot_color, font=F(10, True)).pack(side="left", padx=(12, 6), pady=8)
+            txt = lp["name"] + ("  " + t("migrate.detected") if lp["installed"] else "  " + t("migrate.notfound"))
+            tk.Label(row, text=txt, bg=CARD2, fg=TXT if lp["installed"] else SUB,
+                     font=F(9, True)).pack(side="left")
+            detail = lp["note"]
+            if lp.get("roots"):
+                detail += "  " + "；".join(lp["roots"])
+            tk.Label(row, text=detail, bg=CARD2, fg=DIM, font=F(8), anchor="w",
+                     wraplength=760, justify="left").pack(side="left", fill="x", expand=True, padx=(8, 12))
+
+        area = self.mig_area
+        area.clear()
+        self.mig_candidates = data["candidates"]
+        self.mig_vars = {}
+        if not self.mig_candidates:
+            tk.Label(area.inner, text=t("migrate.empty"), bg=CARD, fg=SUB, font=F(10),
+                     anchor="w", justify="left", wraplength=800).pack(anchor="w", pady=24, padx=16)
+            return
+        tk.Label(area.inner, text=t("migrate.found") % len(self.mig_candidates),
+                 bg=CARD, fg=SUB, font=F(9, True), anchor="w").pack(anchor="w", padx=12, pady=(10, 6))
+        for idx, c in enumerate(self.mig_candidates):
+            var = tk.BooleanVar(value=False)
+            self.mig_vars[idx] = var
+            row = tk.Frame(area.inner, bg=CARD2, highlightbackground=LINE, highlightthickness=1)
+            row.pack(fill="x", pady=4, padx=6)
+            cb = tk.Checkbutton(row, variable=var, bg=CARD2, activebackground=CARD2,
+                                selectcolor=CARD3, highlightthickness=0, bd=0)
+            cb.pack(side="left", padx=(12, 6), pady=10)
+            body = tk.Frame(row, bg=CARD2)
+            body.pack(side="left", fill="x", expand=True, padx=(0, 12), pady=8)
+            top = tk.Frame(body, bg=CARD2)
+            top.pack(fill="x")
+            tk.Label(top, text=c["name"], bg=CARD2, fg=TXT, font=F(10, True), anchor="w").pack(side="left")
+            loader = c.get("loader") or "vanilla"
+            tk.Label(top, text="  " + loader, bg=CARD3, fg=ACC, font=F(8, True), padx=8, pady=2).pack(side="left", padx=(8, 0))
+            meta = t("migrate.meta") % (
+                c.get("mc_version") or "?", util.human_size(c["version_size"]),
+                c["mods_count"], c["saves_count"], c["launcher_name"])
+            tk.Label(body, text=meta, bg=CARD2, fg=SUB, font=F(8), anchor="w").pack(anchor="w", pady=(4, 0))
+            tk.Label(body, text=c["game_root"], bg=CARD2, fg=DIM, font=F(8), anchor="w").pack(anchor="w")
+
+    def _mig_import(self, win):
+        selected = [c for i, c in enumerate(self.mig_candidates) if self.mig_vars.get(i) and self.mig_vars[i].get()]
+        if not selected:
+            messagebox.showwarning(t("migrate.title"), t("migrate.pick"))
+            return
+        mode = self.mig_mode.get()
+        big = bool(self.mig_big.get())
+        self.mig_import_btn.disable(t("migrate.importing"))
+        self.mig_status.config(text=t("migrate.importing"))
+
+        def set_status(s):
+            self.after(0, lambda: self.mig_status.config(text=s))
+
+        def work():
+            ok = []
+            fail = []
+            for c in selected:
+                try:
+                    res = migration.import_candidate(
+                        self.cfg, c, mode=mode, new_name=None,
+                        copy_big_shared=big, status=set_status)
+                    ok.append((c, res))
+                except Exception as e:
+                    fail.append((c, str(e)))
+            self.after(0, lambda: self._mig_done(win, ok, fail))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _mig_done(self, win, ok, fail):
+        self.mig_import_btn.set_kind("primary")
+        self.mig_import_btn.config(text=t("migrate.import"))
+        if fail:
+            messagebox.showerror(t("migrate.title"),
+                                 t("migrate.partial") % (len(ok), len(fail)) + "\n" +
+                                 "\n".join("%s: %s" % (c["name"], e) for c, e in fail[:5]))
+        if ok:
+            names = "、".join(r["inst"].get("name", c["name"]) for c, r in ok)
+            messagebox.showinfo(t("migrate.title"), t("migrate.done") % (len(ok), names))
+            win.destroy()
+            self.show_page("instances")
+        else:
+            self.mig_status.config(text=t("migrate.fail"))
 
     def _inst_backup(self, inst, include_options, include_config):
         self.set_status(t("inst.backup.now") + "…")
@@ -1984,9 +2167,12 @@ class App(tk.Tk):
         right = tk.Frame(outer, bg=BG)
         right.pack(side="left", fill="both", expand=True)
 
-        # 已安装 / 世界 / CurseForge 为非检索页，不走在线筛选
+        # 已安装 / 冲突预检 / 世界 / CurseForge 为非检索页，不走在线筛选
         if self.content_type == "local":
             self._render_local_panel(right)
+            return
+        if self.content_type == "conflict":
+            self._render_conflict_panel(right)
             return
         if self.content_type == "world":
             self._render_world_panel(right)
@@ -2703,11 +2889,22 @@ class App(tk.Tk):
             ok = sum(1 for r in res if not r["skipped"])
             skip = len(res) - ok
             warns = [r["warning"] for r in res if r.get("warning")]
+            mod_imported = any(
+                (not r.get("skipped")) and (
+                    r.get("category") == "mod" or cat == "mod" or
+                    (cat == "auto" and str(r.get("name", "")).lower().endswith(".jar")))
+                for r in res)
             state.config(text=t("local.import_done") % (ok, skip), fg=ACC)
             self._populate_local_rows()
             win.after(600, win.destroy)
             if warns:
                 messagebox.showwarning(t("local.import_warn_title"), "\n".join(warns), parent=self)
+            if mod_imported:
+                go = messagebox.askyesno(t("conflict.after_import.title"),
+                                         t("conflict.after_import.body"), parent=self)
+                if go:
+                    self.content_type = "conflict"
+                    self.show_page("content")
 
         def fail(err):
             bar.set(0)
@@ -2744,6 +2941,225 @@ class App(tk.Tk):
                 cat = self.local_tab
         self.set_status(t("local.drag_received") % len(paths))
         self._run_import(paths, cat)
+
+    # ============================================================ 批次6：冲突预检
+    def _conflict_context(self):
+        inst = self.current_inst()
+        gd = inst["game_dir"]
+        java_path = inst.get("java_path") or self.cfg.get("java_path") or ""
+        ctx = conflictcheck.instance_context(gd, inst.get("last_version") or "", java_path)
+        ctx["game_dir"] = gd
+        ctx["inst_name"] = inst.get("name") or inst.get("id") or "default"
+        return ctx
+
+    def _render_conflict_panel(self, parent):
+        self.conflict_ctx = self._conflict_context()
+        ctx = self.conflict_ctx
+        head = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        head.pack(fill="x", pady=(0, 12))
+        hb = tk.Frame(head, bg=CARD)
+        hb.pack(fill="x", padx=16, pady=(14, 6))
+        tk.Label(hb, text=t("conflict.title"), bg=CARD, fg=TXT, font=F(13, True)).pack(side="left")
+        tk.Label(hb, text="· " + ctx["inst_name"], bg=CARD, fg=ACC, font=F(10, True)).pack(side="left", padx=(8, 0))
+        tk.Label(head, text=t("conflict.subtitle"), bg=CARD, fg=SUB, font=F(9), anchor="w",
+                 justify="left", wraplength=760).pack(fill="x", padx=16)
+        chips = tk.Frame(head, bg=CARD)
+        chips.pack(fill="x", padx=16, pady=(8, 12))
+        loader_txt = ctx["loader"] or t("conflict.loader.unknown")
+        mc_txt = ctx["mc_version"] or t("conflict.mc.unknown")
+        java_txt = ("Java %d" % ctx["java_major"]) if ctx["java_major"] else t("conflict.java.unknown")
+        for txt in (loader_txt, mc_txt, java_txt):
+            tk.Label(chips, text=txt, bg=CARD3, fg=TXT, font=F(8, True), padx=10, pady=4).pack(side="left", padx=(0, 8))
+        btns = tk.Frame(head, bg=CARD)
+        btns.pack(fill="x", padx=16, pady=(0, 14))
+        Btn(btns, t("conflict.rescan"), self._conflict_scan_async, kind="primary", padx=20, pady=6, size=9).pack(side="left", padx=(0, 8))
+        Btn(btns, t("conflict.open_mods"), self._conflict_open_mods, kind="ghost", padx=16, pady=6, size=9).pack(side="left")
+
+        self.conflict_summary = tk.Label(parent, text="", bg=BG, fg=SUB, font=F(9, True), anchor="w")
+        self.conflict_summary.pack(fill="x", pady=(0, 8))
+        self.conflict_area = ScrollArea(parent, bg=BG)
+        self.conflict_area.pack(fill="both", expand=True)
+        self._conflict_scan_async()
+
+    def _conflict_open_mods(self):
+        gd = self.conflict_ctx.get("game_dir") if getattr(self, "conflict_ctx", None) else self.current_inst()["game_dir"]
+        mods = localcontent.category_dir(gd, "mod")
+        try:
+            os.makedirs(mods, exist_ok=True)
+            os.startfile(mods)
+        except Exception as e:
+            messagebox.showerror(t("local.open_fail"), str(e))
+
+    def _conflict_scan_async(self):
+        area = getattr(self, "conflict_area", None)
+        if area is None:
+            return
+        area.clear()
+        tk.Label(area.inner, text=t("conflict.scanning"), bg=BG, fg=SUB, font=F(10)).pack(anchor="w", pady=20)
+        ctx = getattr(self, "conflict_ctx", None) or self._conflict_context()
+        self.conflict_ctx = ctx
+
+        def work():
+            try:
+                rep = conflictcheck.scan_instance(
+                    ctx["game_dir"], ctx.get("loader", ""), ctx.get("mc_version", ""),
+                    ctx.get("java_major", 0))
+                self.after(0, lambda: self._conflict_render(rep))
+            except Exception as e:
+                self.after(0, lambda: self._conflict_render_error(str(e)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _conflict_render_error(self, err):
+        area = self.conflict_area
+        area.clear()
+        tk.Label(area.inner, text=t("conflict.scan_fail") % err, bg=BG, fg=DANGER,
+                 font=F(10), wraplength=720, justify="left").pack(anchor="w", pady=16)
+
+    def _conflict_render(self, rep):
+        self.conflict_report = rep
+        s = rep["summary"]
+        if s["errors"]:
+            head = t("conflict.summary.err") % (s["errors"], s["warnings"], s["infos"])
+            color = DANGER
+        elif s["warnings"]:
+            head = t("conflict.summary.warn") % (s["warnings"], s["infos"])
+            color = WARN
+        else:
+            head = t("conflict.summary.ok") % rep["mod_count"]
+            color = ACC
+        if hasattr(self, "conflict_summary"):
+            self.conflict_summary.config(text=head, fg=color)
+        area = self.conflict_area
+        area.clear()
+        if not rep["issues"]:
+            box = tk.Frame(area.inner, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+            box.pack(fill="x", pady=8)
+            tk.Label(box, text="✓ " + t("conflict.none"), bg=CARD, fg=ACC, font=F(11, True),
+                     anchor="w", justify="left", wraplength=720).pack(anchor="w", padx=18, pady=18)
+            return
+        for issue in rep["issues"]:
+            self._conflict_issue_card(area.inner, issue, self.conflict_ctx, self._conflict_scan_async)
+
+    def _conflict_issue_card(self, parent, issue, ctx, on_changed=None):
+        sev = issue.get("sev", "info")
+        sev_color = {"error": DANGER, "warn": WARN, "info": ACC}.get(sev, SUB)
+        sev_label = {"error": t("conflict.sev.error"), "warn": t("conflict.sev.warn"),
+                     "info": t("conflict.sev.info")}.get(sev, "")
+        card = tk.Frame(parent, bg=CARD2, highlightbackground=LINE, highlightthickness=1)
+        card.pack(fill="x", pady=5)
+        stripe = tk.Frame(card, bg=sev_color, width=3)
+        stripe.pack(side="left", fill="y")
+        body = tk.Frame(card, bg=CARD2)
+        body.pack(side="left", fill="both", expand=True, padx=14, pady=12)
+        top = tk.Frame(body, bg=CARD2)
+        top.pack(fill="x")
+        tk.Label(top, text=sev_label, bg=CARD2, fg=sev_color, font=F(8, True)).pack(side="left", padx=(0, 8))
+        tk.Label(top, text=issue.get("title", ""), bg=CARD2, fg=TXT, font=F(10, True),
+                 anchor="w", justify="left").pack(side="left", fill="x", expand=True)
+        tk.Label(body, text=issue.get("detail", ""), bg=CARD2, fg=SUB, font=F(9),
+                 anchor="w", justify="left", wraplength=700).pack(anchor="w", pady=(5, 2))
+        if issue.get("suggestion"):
+            tk.Label(body, text="→ " + issue["suggestion"], bg=CARD2, fg=ACC, font=F(9),
+                     anchor="w", justify="left", wraplength=700).pack(anchor="w", pady=(2, 2))
+        if issue.get("files"):
+            files_txt = "\n".join("· " + os.path.basename(f) for f in issue["files"][:6])
+            tk.Label(body, text=files_txt, bg=CARD2, fg=DIM, font=F(8),
+                     anchor="w", justify="left").pack(anchor="w", pady=(3, 0))
+        fix = issue.get("fix") or {}
+        ftype = fix.get("type")
+        if ftype in ("disable", "enable", "install_dep"):
+            row = tk.Frame(body, bg=CARD2)
+            row.pack(fill="x", pady=(9, 0))
+            if ftype == "disable":
+                Btn(row, t("conflict.fix.disable"), lambda: self._conflict_fix(issue, ctx, on_changed),
+                    kind="danger", padx=16, pady=5, size=9).pack(side="left")
+            elif ftype == "enable":
+                Btn(row, t("conflict.fix.enable"), lambda: self._conflict_fix(issue, ctx, on_changed),
+                    kind="primary", padx=16, pady=5, size=9).pack(side="left")
+            else:
+                Btn(row, t("conflict.fix.install"), lambda: self._conflict_fix(issue, ctx, on_changed),
+                    kind="primary", padx=16, pady=5, size=9).pack(side="left")
+
+    def _conflict_fix(self, issue, ctx, on_changed=None):
+        fix = issue.get("fix") or {}
+        ftype = fix.get("type")
+        if ftype in ("disable", "enable"):
+            def work():
+                try:
+                    conflictcheck.apply_fix(
+                        ctx["game_dir"], issue,
+                        status=lambda s: self.after(0, lambda: self.set_status(s)),
+                        mc_version=ctx.get("mc_version", ""), loader=ctx.get("loader", ""))
+                    self.after(0, lambda: (self.set_status(t("conflict.fix.done")),
+                                          on_changed() if on_changed else None))
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror(t("conflict.fix.fail"), str(e)))
+            threading.Thread(target=work, daemon=True).start()
+        elif ftype == "install_dep":
+            self._conflict_install_dep(issue, ctx, on_changed)
+
+    def _conflict_install_dep(self, issue, ctx, on_changed=None):
+        win = tk.Toplevel(self)
+        win.title(t("conflict.install.title"))
+        win.configure(bg=BG)
+        win.geometry("460x150")
+        win.transient(self)
+        win.resizable(False, False)
+        tk.Label(win, text=t("conflict.install.wait"), bg=BG, fg=TXT, font=F(10, True),
+                 anchor="w").pack(fill="x", padx=20, pady=(18, 6))
+        status_lab = tk.Label(win, text="…", bg=BG, fg=SUB, font=F(9), anchor="w", wraplength=420, justify="left")
+        status_lab.pack(fill="x", padx=20)
+
+        def set_status(s):
+            self.after(0, lambda: status_lab.config(text=s))
+
+        def work():
+            try:
+                res = conflictcheck.apply_fix(
+                    ctx["game_dir"], issue, status=set_status,
+                    mc_version=ctx.get("mc_version", ""), loader=ctx.get("loader", ""))
+                self.after(0, lambda: (win.destroy(),
+                                       messagebox.showinfo(t("conflict.install.title"),
+                                                           t("conflict.install.ok") % os.path.basename(
+                                                               res["installed"][-1]["path"])),
+                                       on_changed() if on_changed else None))
+            except Exception as e:
+                self.after(0, lambda: (win.destroy(),
+                                       messagebox.showerror(t("conflict.fix.fail"), str(e))))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _crash_precheck(self, host, vid):
+        """崩后归因：在崩溃窗口内对同一实例跑装前预检（异步，不阻塞窗口）。"""
+        for w in host.winfo_children():
+            w.destroy()
+        tk.Label(host, text=t("conflict.scanning"), bg=BG, fg=SUB, font=F(9),
+                 anchor="w").pack(anchor="w", pady=4)
+        ctx = self._conflict_context()
+
+        def work():
+            try:
+                rep = conflictcheck.scan_instance(
+                    ctx["game_dir"], ctx.get("loader", ""), ctx.get("mc_version", ""),
+                    ctx.get("java_major", 0))
+                self.after(0, lambda: self._crash_precheck_render(host, rep, ctx, vid))
+            except Exception as e:
+                self.after(0, lambda: tk.Label(host, text=str(e), bg=BG, fg=DANGER,
+                                               font=F(9), anchor="w").pack(anchor="w"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _crash_precheck_render(self, host, rep, ctx, vid):
+        for w in host.winfo_children():
+            w.destroy()
+        s = rep["summary"]
+        head_color = DANGER if s["errors"] else (WARN if s["warnings"] else ACC)
+        tk.Label(host, text=t("crash.precheck.summary") % (s["errors"], s["warnings"]),
+                 bg=BG, fg=head_color, font=F(9, True), anchor="w").pack(anchor="w", pady=(0, 4))
+        if not rep["issues"]:
+            tk.Label(host, text="✓ " + t("conflict.none"), bg=BG, fg=ACC, font=F(9),
+                     anchor="w", justify="left", wraplength=600).pack(anchor="w")
+            return
+        for issue in rep["issues"][:8]:
+            self._conflict_issue_card(host, issue, ctx, lambda: self._crash_precheck(host, vid))
 
     def _render_pack_meta(self, parent, hit):
         """整合包详情页：异步下载 .mrpack 本体解析 MC/加载器/文件数/大小。"""
@@ -3330,7 +3746,7 @@ class App(tk.Tk):
 
         # 关于
         box = section(t("settings.about"))
-        tk.Label(box, text="MC Lite 正式版 v1.7.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
+        tk.Label(box, text="MC Lite 正式版 v1.8.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
                  font=F(10, True), anchor="w").pack(anchor="w")
         tk.Label(box, text=t("settings.about.text"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", pady=(4, 0))
 

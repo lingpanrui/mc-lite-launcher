@@ -7,7 +7,7 @@
 缓存结构：
 {
   "cache_version": 1,
-  "launcher": "1.7.0",
+  "launcher": "1.8.0",
   "vid": "1.20.1",
   "cached_at": 1795...,
   "fingerprint": { ... 关键文件/目录的 mtime+size/计数 ... },
@@ -108,7 +108,7 @@ def _read_cache(game_dir):
 def _write_cache(game_dir, vid, fp, info):
     payload = {
         "cache_version": CACHE_VERSION,
-        "launcher": "1.7.0",
+        "launcher": "1.8.0",
         "vid": vid,
         "cached_at": time.time(),
         "fingerprint": fp,

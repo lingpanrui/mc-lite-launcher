@@ -227,7 +227,7 @@ def _scan_file_category(game_dir, category, inst_loader=""):
         except OSError:
             size = 0
         info = {"loaders": [], "ids": [], "name": None, "version": None,
-                "dependencies": {}, "java": None}
+                "dependencies": {}, "java": None, "dep_list": []}
         warning = None
         if category == "mod" and base_low.endswith(".jar"):
             info = detect_mod_info(full)
@@ -245,6 +245,7 @@ def _scan_file_category(game_dir, category, inst_loader=""):
             "mod_name": info.get("name"),
             "mod_version": info.get("version"),
             "warning": warning,
+            "info": info,
         })
     return items
 
@@ -319,7 +320,7 @@ def detect_mod_info(jar_path):
     为批次6 冲突预检预留：ids / dependencies / java 已按统一结构给出。
     """
     empty = {"loaders": [], "ids": [], "name": None, "version": None,
-             "dependencies": {}, "java": None}
+             "dependencies": {}, "java": None, "dep_list": []}
     try:
         with zipfile.ZipFile(jar_path) as zf:
             names = set(zf.namelist())
@@ -338,6 +339,7 @@ def detect_mod_info(jar_path):
                     "version": str(data.get("version")) if data.get("version") is not None else None,
                     "dependencies": deps if isinstance(deps, dict) else {},
                     "java": str(java) if java else None,
+                    "dep_list": _fabric_dep_list(deps if isinstance(deps, dict) else {}),
                 }
             # 2) NeoForge（优先于 Forge，二者都用 mods.toml 时以 neoforge.mods.toml 为准）
             if "META-INF/neoforge.mods.toml" in names:
@@ -360,6 +362,7 @@ def detect_mod_info(jar_path):
                             "version": str(first.get("version")) if first.get("version") is not None else None,
                             "dependencies": {},
                             "java": None,
+                            "dep_list": [],
                         }
                 except Exception:
                     pass
@@ -368,24 +371,78 @@ def detect_mod_info(jar_path):
     return empty
 
 
+def _fabric_dep_list(deps):
+    """把 fabric.mod.json 的 depends 归一化为 [{mod_id, range, mandatory, source}]。
+
+    depends 里的值可能是字符串、字符串数组或对象；recommends/suggests 不在这里，
+    因此这里全部视为强制依赖（Fabric 的 depends 语义即必需）。
+    """
+    out = []
+    if not isinstance(deps, dict):
+        return out
+    for mid, val in deps.items():
+        rng = None
+        if isinstance(val, str):
+            rng = val
+        elif isinstance(val, list) and val:
+            rng = " ".join(str(x) for x in val)
+        elif isinstance(val, dict):
+            rng = val.get("version") or val.get("range")
+        out.append({"mod_id": str(mid), "range": rng, "mandatory": True, "source": "fabric"})
+    return out
+
+
 def _parse_mods_toml(text, loader):
-    """从 Forge/NeoForge mods.toml 粗取 modId/displayName/version（不引入 TOML 依赖）。"""
+    """从 Forge/NeoForge mods.toml 粗取 modId/displayName/version 与依赖块（不引入 TOML 依赖）。
+
+    依赖块形如 ``[[dependencies.<modid>]]``，块内读 modId / mandatory / versionRange；
+    归一化到 dep_list，供批次6 冲突预检使用。
+    """
+    empty = {"loaders": [loader], "ids": [], "name": None, "version": None,
+             "dependencies": {}, "java": None, "dep_list": []}
     if not text:
-        return {"loaders": [loader], "ids": [], "name": None, "version": None,
-                "dependencies": {}, "java": None}
+        return empty
     mod_id = None
     display = None
     version = None
+    deps = []
+    cur = None
+    in_dep = False
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        if mod_id is None and line.startswith("modId") and "=" in line:
-            mod_id = _toml_string(line.split("=", 1)[1])
-        elif display is None and line.startswith("displayName") and "=" in line:
-            display = _toml_string(line.split("=", 1)[1])
-        elif version is None and line.startswith("version") and "=" in line:
-            version = _toml_string(line.split("=", 1)[1])
+        if line.startswith("[[") and line.endswith("]]"):
+            sec = line[2:-2].strip()
+            if sec.startswith("dependencies."):
+                mid = sec[len("dependencies."):].strip().strip('"').strip("'")
+                cur = {"mod_id": mid, "range": None, "mandatory": True, "source": loader}
+                deps.append(cur)
+                in_dep = True
+            else:
+                cur = None
+                in_dep = False
+            continue
+        if "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        key = key.strip()
+        val = val.strip()
+        if in_dep and cur is not None:
+            if key == "modId":
+                cur["mod_id"] = _toml_string(val)
+            elif key == "versionRange":
+                cur["range"] = _toml_string(val)
+            elif key == "mandatory":
+                cur["mandatory"] = (val.lower() == "true")
+            continue
+        if mod_id is None and key == "modId":
+            mod_id = _toml_string(val)
+        elif display is None and key == "displayName":
+            display = _toml_string(val)
+        elif version is None and key == "version":
+            version = _toml_string(val)
+    dep_list = [d for d in deps if d.get("mod_id")]
     return {
         "loaders": [loader],
         "ids": [mod_id] if mod_id else [],
@@ -393,6 +450,7 @@ def _parse_mods_toml(text, loader):
         "version": version,
         "dependencies": {},
         "java": None,
+        "dep_list": dep_list,
     }
 
 

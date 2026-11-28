@@ -25,7 +25,7 @@ from . import util
 DEFAULT_ID = "default"
 EXPORT_FORMAT = "mclite-instance"
 EXPORT_VERSION = 1
-LAUNCHER_VERSION = "1.7.0"
+LAUNCHER_VERSION = "1.8.0"
 
 INSTANCE_FIELDS = (
     "id", "name", "icon", "game_dir", "java_path", "memory_mb", "width",
