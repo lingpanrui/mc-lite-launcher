@@ -11,11 +11,12 @@ import datetime
 import os
 import re
 import threading
+import webbrowser
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
 
 from . import i18n, imgcache, modrinth, poll, util
-from . import doctor, instances, accounts, forge, quilt
+from . import doctor, instances, accounts, forge, quilt, contenthub
 from . import theme
 from .i18n import t
 
@@ -54,6 +55,12 @@ CONTENT_TYPES = [
     ("shader", "content.tab.shader", "shaderpacks"),
     ("resourcepack", "content.tab.res", "resourcepacks"),
     ("datapack", "content.tab.data", "datapacks"),
+]
+
+# 非检索类资源中心页：世界（本地入口）/ CurseForge（诚实标注，不做假搜索）
+CONTENT_EXTRA_NAV = [
+    ("world", "content.tab.world"),
+    ("curseforge", "content.tab.cf"),
 ]
 
 GAME_VERSIONS = ["", "1.21.4", "1.21.1", "1.20.6", "1.20.4", "1.20.2", "1.20.1",
@@ -358,7 +365,10 @@ class App(tk.Tk):
         self.content_hits = []
         self.content_total = 0
         self.content_busy = False
+        self.content_offset = 0
+        self.content_loading_more = False
         self.detail_hit = None
+        self.detail_pack_path = None
 
         self._build_chrome()
         self.show_page("home")
@@ -1941,8 +1951,22 @@ class App(tk.Tk):
             sn.pack(fill="x", pady=1)
             self.type_navs[key] = sn
 
+        divider(left, pady=8)
+        for key, tk_key in CONTENT_EXTRA_NAV:
+            sn = SubNav(left, t(tk_key), "", lambda k=key: self._switch_type(k), active=(key == self.content_type))
+            sn.pack(fill="x", pady=1)
+            self.type_navs[key] = sn
+
         right = tk.Frame(outer, bg=BG)
         right.pack(side="left", fill="both", expand=True)
+
+        # 世界 / CurseForge 为诚实说明页，不走检索筛选
+        if self.content_type == "world":
+            self._render_world_panel(right)
+            return
+        if self.content_type == "curseforge":
+            self._render_curseforge_panel(right)
+            return
 
         # 筛选卡
         fcard = tk.Frame(right, bg=CARD, highlightbackground=LINE, highlightthickness=1)
@@ -2020,12 +2044,13 @@ class App(tk.Tk):
             return
         self.content_query = self.search_entry.get().strip() if hasattr(self, "search_entry") else self.content_query
         self.content_busy = True
+        self.content_offset = 0
         if hasattr(self, "result_head"):
             self.result_head.config(text=t("content.loading"))
         self.set_status(t("content.loading"))
         params = dict(project_type=self.content_type, query=self.content_query,
                       loader=self.content_loader or None, game_version=self.content_version or None,
-                      limit=24, sort=self.content_sort)
+                      limit=24, offset=0, sort=self.content_sort)
 
         def work():
             try:
@@ -2038,11 +2063,45 @@ class App(tk.Tk):
                 self.content_busy = False
                 self.content_hits = hits
                 self.content_total = total
+                self.content_offset = len(hits)
                 if err:
                     if hasattr(self, "result_head"):
                         self.result_head.config(text=t("content.fail"))
                     self.set_status(t("content.fail"))
                     return
+                self._render_results()
+            self.after(0, done)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _load_more(self):
+        if self.content_loading_more or self.content_busy:
+            return
+        if len(self.content_hits) >= self.content_total:
+            return
+        self.content_loading_more = True
+        if hasattr(self, "more_btn"):
+            self.more_btn.disable(t("content.loading_more"))
+        offset = len(self.content_hits)
+        params = dict(project_type=self.content_type, query=self.content_query,
+                      loader=self.content_loader or None, game_version=self.content_version or None,
+                      limit=24, offset=offset, sort=self.content_sort)
+
+        def work():
+            try:
+                hits, total = modrinth.search(**params)
+                err = None
+            except Exception as e:
+                hits, total, err = [], self.content_total, str(e)
+
+            def done():
+                self.content_loading_more = False
+                if err:
+                    self.set_status(t("content.fail"))
+                else:
+                    self.content_hits.extend(hits)
+                    self.content_total = total
+                    self.content_offset = len(self.content_hits)
                 self._render_results()
             self.after(0, done)
 
@@ -2055,6 +2114,16 @@ class App(tk.Tk):
         self.set_status("")
         for hit in self.content_hits:
             self._resource_row(area.inner, hit)
+
+        bottom = tk.Frame(area.inner, bg=BG)
+        bottom.pack(fill="x", pady=(14, 6))
+        self.more_btn = None
+        if self.content_total and len(self.content_hits) < self.content_total:
+            self.more_btn = Btn(bottom, t("content.more"), self._load_more, kind="ghost",
+                                padx=22, pady=7, size=9)
+            self.more_btn.pack()
+        elif self.content_hits:
+            tk.Label(bottom, text=t("content.no_more"), bg=BG, fg=DIM, font=F(8)).pack()
 
     def _resource_row(self, parent, hit):
         title = hit.get("title") or hit.get("slug") or "?"
@@ -2102,7 +2171,9 @@ class App(tk.Tk):
         tk.Label(meta, text="  ·  ".join(bits), bg=CARD, fg=DIM, font=F(8), anchor="w").pack(side="left")
         tk.Label(meta, text="Modrinth", bg=CARD, fg="#5aa7f0", font=F(8, True), anchor="w").pack(side="left", padx=(12, 0))
 
-        Btn(body, t("content.get"), lambda h=hit: self._download(h), kind="outline",
+        is_pack = (hit.get("project_type") or self.content_type) == "modpack"
+        btn_text = t("content.install_pack") if is_pack else t("content.get")
+        Btn(body, btn_text, lambda h=hit: self._content_action(h), kind="outline",
             padx=16, pady=6, size=9).pack(side="right", padx=(10, 14))
 
 
@@ -2150,13 +2221,18 @@ class App(tk.Tk):
             if txt:
                 tk.Label(line, text=txt, bg=CARD, fg=color, font=F(9, True), anchor="w").pack(side="left", padx=(0, 16))
 
-        Btn(hb, t("content.get"), lambda h=hit: self._download(h), kind="primary",
+        is_pack = (hit.get("project_type") or self.content_type) == "modpack"
+        hero_text = t("content.detail.install_pack") if is_pack else t("content.get")
+        Btn(hb, hero_text, lambda h=hit: self._content_action(h), kind="primary",
             padx=18, pady=8, size=10).pack(side="right")
 
         desc = (hit.get("description") or "").strip()
         tk.Label(self.page_host, text=t("content.detail.desc"), bg=BG, fg=DIM, font=F(8, True), anchor="w").pack(anchor="w", pady=(14, 4))
         tk.Label(self.page_host, text=desc, bg=CARD, fg=SUB, font=F(9), anchor="w",
                  wraplength=900, justify="left", padx=16, pady=12).pack(fill="x")
+
+        if is_pack:
+            self._render_pack_meta(self.page_host, hit)
 
         gv = self.content_version or latest_mc_version(hit)
         head_txt = t("content.detail.versions")
@@ -2194,8 +2270,13 @@ class App(tk.Tk):
                         "%.1f MB" % ((f.get("size") or 0) / 1048576.0) if f.get("size") else "",
                     ] if x])
                     tk.Label(vb, text=extra, bg=CARD, fg=SUB, font=F(8), anchor="w").pack(side="left", padx=(12, 0))
-                    Btn(vb, t("common.download"), lambda vv=v: self._download_version(vv), kind="quiet",
-                        padx=12, pady=4, size=8).pack(side="right")
+                    if is_pack:
+                        Btn(vb, t("content.install_pack"),
+                            lambda vv=v: self._open_modpack_install(hit, version=vv), kind="quiet",
+                            padx=12, pady=4, size=8).pack(side="right")
+                    else:
+                        Btn(vb, t("common.download"), lambda vv=v: self._download_version(vv), kind="quiet",
+                            padx=12, pady=4, size=8).pack(side="right")
                     divider(area.inner)
 
             self.after(0, done)
@@ -2247,6 +2328,376 @@ class App(tk.Tk):
                 self.after(0, lambda: self.set_status(err))
 
         threading.Thread(target=work, daemon=True).start()
+
+    # ------------------------------------------------------------ 批次3 资源中心
+    def _content_action(self, hit):
+        ptype = hit.get("project_type") or self.content_type
+        if ptype == "modpack":
+            self._open_modpack_install(hit)
+        else:
+            self._install_content(hit)
+
+    def _install_content(self, hit, ver=None):
+        """模组/光影/资源包/数据包一键装入当前实例对应目录（带进度窗）。"""
+        ptype = hit.get("project_type") or self.content_type
+        if ptype == "modpack":
+            self._open_modpack_install(hit, version=ver)
+            return
+        pid = hit.get("project_id") or hit.get("slug")
+        folder = self._target_folder()
+
+        win = tk.Toplevel(self)
+        win.title(t("content.install"))
+        win.configure(bg=BG)
+        win.geometry("560x250")
+        win.transient(self)
+        tk.Label(win, text=hit.get("title") or "?", bg=BG, fg=TXT, font=F(13, True),
+                 anchor="w").pack(fill="x", padx=24, pady=(20, 2))
+        tk.Label(win, text=os.path.join(self.game_dir, folder), bg=BG, fg=DIM, font=F(8),
+                 anchor="w").pack(fill="x", padx=24)
+        bar = ProgressBar(win, height=10)
+        bar.pack(fill="x", padx=24, pady=(16, 8))
+        state = tk.Label(win, text=t("content.installing"), bg=BG, fg=SUB, font=F(9),
+                         anchor="w", wraplength=500, justify="left")
+        state.pack(fill="x", padx=24)
+        close_btn = Btn(win, t("content.pack.close"), win.destroy, kind="quiet",
+                        padx=16, pady=7, size=9)
+        close_btn.pack(side="right", padx=24, pady=16)
+        bar.set(0.15)
+
+        def cb(s):
+            self.after(0, lambda: state.config(text=s, fg=SUB))
+
+        def done_ok(n):
+            bar.set(1.0)
+            state.config(text=t("content.install_done"), fg=ACC)
+            hint = {
+                "shader": t("content.shader.hint"),
+                "resourcepack": t("content.resource.hint"),
+                "datapack": t("content.datapack.hint"),
+            }.get(ptype, t("content.install_done"))
+            messagebox.showinfo(t("content.install_done"), hint, parent=win)
+
+        def done_fail(err):
+            bar.set(0)
+            state.config(text=t("content.install_fail") % err, fg=DANGER)
+
+        def work():
+            try:
+                if ver is not None:
+                    entry = modrinth.primary_file(ver) or {}
+                    if not entry.get("url"):
+                        raise ValueError("该版本没有可下载文件")
+                    modrinth._download_file_entry(entry, folder, status=cb)
+                else:
+                    contenthub.install_content(
+                        pid, self.game_dir, ptype,
+                        game_version=self.content_version or None,
+                        loader=self.content_loader or None, status=cb)
+                self.after(0, lambda: done_ok(1))
+            except Exception as e:
+                self.after(0, lambda: done_fail(str(e)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _open_saves_dir(self):
+        d = os.path.join(self.game_dir, "saves")
+        try:
+            os.makedirs(d, exist_ok=True)
+            util.open_path(d)
+        except Exception as e:
+            messagebox.showerror("MC Lite", str(e))
+
+    def _open_external(self, url):
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    def _render_world_panel(self, parent):
+        card = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        card.pack(fill="x")
+        inner = tk.Frame(card, bg=CARD)
+        inner.pack(fill="x", padx=18, pady=18)
+        tk.Label(inner, text=t("content.world.honest"), bg=CARD, fg=SUB, font=F(10),
+                 anchor="w", justify="left", wraplength=920).pack(anchor="w")
+        row = tk.Frame(inner, bg=CARD)
+        row.pack(fill="x", pady=(14, 0))
+        Btn(row, t("content.world.open_saves"), self._open_saves_dir, kind="primary",
+            padx=18, pady=8, size=10).pack(side="left", padx=(0, 10))
+        Btn(row, t("content.world.ext_pm"),
+            lambda: self._open_external("https://www.planetminecraft.com/"),
+            kind="ghost", padx=14, pady=8, size=9).pack(side="left", padx=(0, 10))
+        Btn(row, t("content.world.ext_gh"),
+            lambda: self._open_external(
+                "https://github.com/search?q=minecraft+world+save&type=repositories"),
+            kind="ghost", padx=14, pady=8, size=9).pack(side="left")
+        tk.Label(inner, text=t("content.world.thirdparty"), bg=CARD, fg=DIM, font=F(8),
+                 anchor="w", justify="left", wraplength=920).pack(anchor="w", pady=(12, 0))
+
+    def _render_curseforge_panel(self, parent):
+        card = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        card.pack(fill="x")
+        inner = tk.Frame(card, bg=CARD)
+        inner.pack(fill="x", padx=18, pady=18)
+        tk.Label(inner, text=t("content.cf.title"), bg=CARD, fg=TXT, font=F(13, True),
+                 anchor="w").pack(anchor="w")
+        tk.Label(inner, text=t("content.cf.body"), bg=CARD, fg=SUB, font=F(10),
+                 anchor="w", justify="left", wraplength=920).pack(anchor="w", pady=(10, 0))
+        row = tk.Frame(inner, bg=CARD)
+        row.pack(fill="x", pady=(14, 0))
+        Btn(row, t("content.cf.open_web"),
+            lambda: self._open_external("https://www.curseforge.com/minecraft/mc-mods"),
+            kind="primary", padx=18, pady=8, size=10).pack(side="left")
+        tk.Label(inner, text=t("content.cf.guide"), bg=CARD, fg=DIM, font=F(8),
+                 anchor="w", justify="left", wraplength=920).pack(anchor="w", pady=(12, 0))
+
+    def _render_pack_meta(self, parent, hit):
+        """整合包详情页：异步下载 .mrpack 本体解析 MC/加载器/文件数/大小。"""
+        card = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        card.pack(fill="x", pady=(0, 4))
+        inner = tk.Frame(card, bg=CARD)
+        inner.pack(fill="x", padx=16, pady=12)
+        lab = tk.Label(inner, text=t("content.pack.detail_loading"), bg=CARD, fg=SUB,
+                       font=F(9), anchor="w", justify="left", wraplength=920)
+        lab.pack(fill="x")
+        pid = hit.get("project_id") or hit.get("slug")
+
+        def render(path, s):
+            self.detail_pack_path = path
+            if s.get("loader"):
+                txt = t("content.pack.meta") % (
+                    s["minecraft"] or "?", s["loader"], s["loader_version"] or "",
+                    s["file_count"], util.human_size(s["total_bytes"]), s["override_count"])
+            else:
+                txt = t("content.pack.meta_noloader") % (
+                    s["minecraft"] or "?", s["file_count"],
+                    util.human_size(s["total_bytes"]), s["override_count"])
+            lab.config(text=txt, fg=SUB)
+
+        def work():
+            try:
+                path, _ = contenthub.download_mrpack(
+                    pid, contenthub.cache_dir(),
+                    self.content_version or None, self.content_loader or None)
+                summ = contenthub.pack_summary(path)
+                self.after(0, lambda: render(path, summ))
+            except Exception:
+                self.after(0, lambda: lab.config(text=t("content.pack.detail_fail"), fg=WARN))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _open_modpack_install(self, hit, version=None, pack_path=None):
+        """整合包一键安装向导：选目标实例（当前/新建）→ 阶段进度 → 失败可重试。"""
+        pid = hit.get("project_id") or hit.get("slug")
+        title = hit.get("title") or hit.get("slug") or "Modpack"
+
+        win = tk.Toplevel(self)
+        win.title(t("content.install_pack"))
+        win.configure(bg=BG)
+        win.geometry("720x680")
+        win.minsize(640, 580)
+        win.transient(self)
+
+        tk.Label(win, text=title, bg=BG, fg=TXT, font=F(15, True), anchor="w").pack(
+            fill="x", padx=24, pady=(20, 2))
+        meta_lab = tk.Label(win, text=t("content.pack.downloading_pack"), bg=BG, fg=SUB,
+                           font=F(9), anchor="w", justify="left", wraplength=660)
+        meta_lab.pack(fill="x", padx=24)
+
+        trow = tk.Frame(win, bg=BG)
+        trow.pack(fill="x", padx=24, pady=(12, 4))
+        tk.Label(trow, text=t("content.pack.target"), bg=BG, fg=SUB, font=F(9),
+                 width=10, anchor="w").pack(side="left")
+        inst_ids = [i["id"] for i in instances.list_instances(self.cfg)]
+        vals = ["new"] + inst_ids
+        cur_id = self.current_inst()["id"]
+        if cur_id not in vals:
+            cur_id = inst_ids[0] if inst_ids else "new"
+
+        def inst_label(iid):
+            if iid == "new":
+                return t("content.pack.new_inst")
+            inst = instances.get_instance(self.cfg, iid)
+            return self.inst_display_name(inst) if inst else iid
+
+        target_sel = Select(trow, vals, cur_id, width=28, labels=inst_label)
+        target_sel.pack(side="left")
+
+        bar = ProgressBar(win, height=10)
+        bar.pack(fill="x", padx=24, pady=(14, 6))
+        stage = tk.Label(win, text=t("content.pack.ready"), bg=BG, fg=SUB, font=F(9),
+                         anchor="w", wraplength=660, justify="left")
+        stage.pack(fill="x", padx=24)
+
+        logf = tk.Frame(win, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        logf.pack(fill="both", expand=True, padx=24, pady=(10, 8))
+        logtxt = tk.Text(logf, bg=CARD2, fg=TXT, font=F(8), relief="flat", bd=0,
+                         height=9, wrap="word", state="disabled")
+        logtxt.pack(fill="both", expand=True, padx=8, pady=8)
+
+        brow = tk.Frame(win, bg=BG)
+        brow.pack(fill="x", padx=24, pady=(0, 18))
+        close_btn = Btn(brow, t("content.pack.close"), win.destroy, kind="quiet",
+                        padx=16, pady=7, size=9)
+        close_btn.pack(side="right")
+        retry_btn = Btn(brow, t("content.pack.retry"), None, kind="ghost",
+                        padx=14, pady=7, size=9)
+        retry_btn.pack(side="right", padx=(0, 8))
+        start_btn = Btn(brow, t("content.pack.start"), None, kind="primary",
+                        padx=18, pady=7, size=10)
+        start_btn.pack(side="right", padx=(0, 8))
+
+        state = {"pack_path": pack_path, "game_dir": None, "busy": False,
+                 "failed": [], "target_id": cur_id}
+
+        def log(msg):
+            def _():
+                logtxt.config(state="normal")
+                logtxt.insert("end", str(msg) + "\n")
+                logtxt.see("end")
+                logtxt.config(state="disabled")
+            self.after(0, _)
+
+        def set_stage(s, color=None):
+            self.after(0, lambda: stage.config(text=s, fg=color or SUB))
+
+        def set_bar(f):
+            self.after(0, lambda: bar.set(max(0.0, min(1.0, float(f)))))
+
+        def render_meta(s):
+            if not s:
+                meta_lab.config(text=t("content.pack.parse_fail"), fg=WARN)
+                return
+            if s.get("loader"):
+                txt = t("content.pack.meta") % (
+                    s["minecraft"] or "?", s["loader"], s["loader_version"] or "",
+                    s["file_count"], util.human_size(s["total_bytes"]), s["override_count"])
+            else:
+                txt = t("content.pack.meta_noloader") % (
+                    s["minecraft"] or "?", s["file_count"],
+                    util.human_size(s["total_bytes"]), s["override_count"])
+            meta_lab.config(text=txt, fg=SUB)
+
+        def ensure_pack():
+            if state["pack_path"] and os.path.isfile(state["pack_path"]):
+                try:
+                    render_meta(contenthub.pack_summary(state["pack_path"]))
+                    return
+                except Exception:
+                    state["pack_path"] = None
+
+            def work():
+                try:
+                    path, _ = contenthub.download_mrpack(
+                        pid, contenthub.cache_dir(),
+                        self.content_version or None, self.content_loader or None,
+                        version_id=(version.get("id") if version else None),
+                        status=lambda s: self.after(0, lambda: set_stage(s)))
+                    state["pack_path"] = path
+                    summ = contenthub.pack_summary(path)
+                    self.after(0, lambda: render_meta(summ))
+                except Exception as e:
+                    self.after(0, lambda: meta_lab.config(
+                        text=t("content.pack.parse_fail") + "  " + str(e), fg=WARN))
+
+            threading.Thread(target=work, daemon=True).start()
+
+        def resolve_target():
+            tid = target_sel.value
+            if tid == "new":
+                name = simpledialog.askstring(
+                    t("content.pack.new_name_title"), t("content.pack.new_name_prompt"),
+                    parent=win)
+                if not name or not name.strip():
+                    target_sel.set(state["target_id"])
+                    return None
+                inst = instances.create(self.cfg, name.strip(), switch=False)
+                ids = [i["id"] for i in instances.list_instances(self.cfg)]
+                target_sel.set_values(["new"] + ids, inst["id"])
+                tid = inst["id"]
+            state["target_id"] = tid
+            return instances.get_instance(self.cfg, tid)
+
+        def run_install():
+            if state["busy"]:
+                return
+            if not state["pack_path"] or not os.path.isfile(state["pack_path"]):
+                messagebox.showwarning(t("content.install_pack"),
+                                     t("content.pack.downloading_pack"), parent=win)
+                return
+            inst = resolve_target()
+            if not inst:
+                return
+            state["game_dir"] = inst["game_dir"]
+            state["busy"] = True
+            state["failed"] = []
+            start_btn.disable(t("content.installing"))
+            retry_btn.disable()
+            bar.set(0.02)
+            log("=== %s -> %s (%s) ===" % (title, inst["name"], inst["game_dir"]))
+
+            def cb_status(s):
+                log(s)
+                set_stage(s)
+
+            def cb_prog(f):
+                set_bar(f)
+
+            def work():
+                try:
+                    res = contenthub.install_mrpack(
+                        state["pack_path"], state["game_dir"], status=cb_status,
+                        progress=cb_prog, install_runtime_flag=True)
+                    self.after(0, lambda: done_ok(res, inst))
+                except Exception as e:
+                    self.after(0, lambda: done_fail(str(e)))
+
+            threading.Thread(target=work, daemon=True).start()
+
+        def done_ok(res, inst):
+            state["busy"] = False
+            state["failed"] = res.get("failed_files") or []
+            bar.set(1.0)
+            summary = t("content.pack.summary") % (
+                res["success"], res["total"], res["skipped"], len(state["failed"]),
+                res["overrides"], util.human_size(res["bytes"]))
+            set_stage(summary, ACC if not state["failed"] else WARN)
+            log(summary)
+            if state["failed"]:
+                log(t("content.pack.failed_title"))
+                for ff in state["failed"][:20]:
+                    log("  - %s : %s" % (ff.get("path"), ff.get("error")))
+                retry_btn.set_kind("primary")
+                retry_btn.command = run_install
+                retry_btn.config(state="normal")
+            else:
+                retry_btn.disable()
+                messagebox.showinfo(
+                    t("content.install_done"),
+                    t("content.pack.installed_to") % inst["name"], parent=win)
+            start_btn.set_kind("primary")
+            start_btn.config(text=t("content.pack.start"), state="normal")
+            start_btn.command = run_install
+            if inst["id"] == self.current_inst()["id"] and self.page == "versions":
+                self.show_page("versions")
+
+        def done_fail(err):
+            state["busy"] = False
+            bar.set(0)
+            set_stage(t("content.install_fail") % err, DANGER)
+            log("ERROR: " + err)
+            retry_btn.set_kind("primary")
+            retry_btn.command = run_install
+            retry_btn.config(state="normal")
+            start_btn.set_kind("primary")
+            start_btn.config(text=t("content.pack.start"), state="normal")
+            start_btn.command = run_install
+
+        start_btn.command = run_install
+        retry_btn.command = run_install
+        retry_btn.disable()
+        ensure_pack()
 
     # ------------------------------------------------------------ 联机
     def _page_online(self):
@@ -2528,7 +2979,7 @@ class App(tk.Tk):
 
         # 关于
         box = section(t("settings.about"))
-        tk.Label(box, text="MC Lite 正式版 v1.4.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
+        tk.Label(box, text="MC Lite 正式版 v1.5.0  ·  MIT  ·  Python + tkinter", bg=CARD, fg=TXT,
                  font=F(10, True), anchor="w").pack(anchor="w")
         tk.Label(box, text=t("settings.about.text"), bg=CARD, fg=SUB, font=F(9), anchor="w").pack(anchor="w", pady=(4, 0))
 
