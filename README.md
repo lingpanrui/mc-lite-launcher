@@ -1,257 +1,176 @@
-# MC Lite 启动器
+# MC Lite 启动器 · 正式版 v1.0
 
-一个 **Windows 开箱即用** 的 Minecraft 启动器：Java 版 + 基岩版统一管理，
-能装游戏、装模组光影、开联机房间。界面用 tkinter 手写深色主题，
-打包后的 `MCLite.exe` 是单文件，**不需要装 Python / Java / 任何运行库**就能启动
+**Windows + Android** 的 Minecraft 启动器：Java 版与基岩版统一管理，能装模组光影、开联机房间。
+桌面端 `MCLite-v2.exe` 是单文件，**不需要装 Python / Java / 任何运行库**就能启动
 （Java 版游戏本身需要的 JDK 由启动器自动检测并下载 Temurin）。
 
 > 纯 Python 标准库实现，源码无第三方依赖；MIT 协议开源。
 
 ## 下载
 
-到 [Releases](../../releases/latest) 下载，Android 版装 `MCLite-android.apk`。
+到 [Releases](../../releases/latest) 下载：
+
+| 文件 | 说明 |
+| --- | --- |
+| `MC-Lite-v1.0.exe` | Windows 桌面端，正式版 v1.0，已自签名 |
+| `MCLite-android-1.2.0.apk` | Android 端，含 Java 版运行环境接入 |
+| `MC-Lite-v1.0-src.zip` | 桌面端完整源码 |
+| `MCLite-selfsigned.cer` / `trust-mclite-cert.bat` | 自签名证书与本机信任脚本 |
+| `SHA256SUMS.txt` | 全部资产的 SHA-256 |
 
 ### Windows 版（三步）
 
-1. 把 `MCLite.exe`、`MCLite-selfsigned.cer`、`trust-mclite-cert.bat` 解压到**同一个目录**
+1. 把 `MC-Lite-v1.0.exe`、`MCLite-selfsigned.cer`、`trust-mclite-cert.bat` 放在**同一个目录**
 2. 双击 `trust-mclite-cert.bat`（当前用户级别，不需要管理员），把发布者证书装进本机
-3. 双击 `MCLite.exe` 运行，绿色免安装，不写注册表，数据都在 `%APPDATA%\MCLite`
+3. 双击 `MC-Lite-v1.0.exe` 运行，绿色免安装，不写注册表，数据都在 `%APPDATA%\MCLite`
 
 > 不想导入证书也能跑，只是首次启动会提示"未知发布者"，点「更多信息 → 仍要运行」即可。
-> 撤销信任：`certutil -user -delstore Root A382880EE6D964E45D8410303303C373415060B3` 和
-> `certutil -user -delstore TrustedPublisher A382880EE6D964E45D8410303303C373415060B3`。
 
 ### Android 版
 
-直接安装 APK 即可（`versionName 1.1.0` / `versionCode 2`）；签名指纹固定为
-`c03b83acde011eb8fe85bf77bf6936a4d074b0aaf2d0c9a3c50b918fea55c6eb`，之后版本可直接覆盖升级。
+直接安装 APK（`versionName 1.2.0` / `versionCode 3` / minSdk 24）。
 
-### 从源码跑
+**注意：1.2.0 换了签名证书**（旧 1.1.0 的 CI 私钥未保留），签名指纹现在是
+`84b0cc3a2244ea006ad73102d27d1d3c2ab6493f12e44c2c6569b334ec55ffc7`，
+所以装过 1.1.0 的机器**必须先卸载旧版**，再装 1.2.0，之后版本沿用这把 key 可直接覆盖升级。
 
-`启动.bat`（需要 Python 3.10+，仅标准库）。
+## 桌面端 v1.0 的功能
 
-## 功能
+### 界面
+- 深色主题全自绘组件（自定义按钮 / 滚动区 / 进度条 / 下拉框 / 侧边导航），无第三方 UI 库
+- **中英双语实时切换**，语言写入配置持久化
+- 首页：已装版本数、社区票数、我的投票、Modrinth 入口 + 三张快速开始卡
 
-### Java 版
-- 官方版本清单（正式版 / 快照 / 旧版本，900+ 版本），一键安装核心、依赖库、
-  资源文件与日志配置，支持断点重下与 SHA1 校验
-- 加载器：**Fabric**、**Quilt**、**Forge**、**NeoForge**
-  （Forge/NeoForge 调用官方安装器并自动准备 `launcher_profiles.json`；
-  官方源不可达时自动走 BMCLAPI 镜像）
-- 登录方式：
-  - 离线登录（自定义玩家名，单机/局域网可用）
-  - 外置登录（authlib-injector，自动下载 jar 并注入 `-javaagent`，
-    适配 LittleSkin 等皮肤站）
-  - 微软正版（设备码流程，需自备 Azure 公开客户端 Client ID）
-- 启动参数：内存、分辨率、自定义 JVM 参数；按版本自动匹配 Java 8/16/17/21/25，
-  缺哪个版本就下载哪个
+### 版本与启动
+- 扫描已安装版本（原版 / Fabric / Quilt / Forge / NeoForge），识别加载器与版本目录
+- 启动时按版本自动匹配 Java 8/16/17/21/25，缺哪个下载哪个
+- 内存分配、自定义 JVM 参数、Java 路径、数据目录
+
+### 内容下载（照 PCL2 的布局）
+- 左侧资源类型栏（模组 / 光影 / 资源包）+ 筛选卡 + **带真实图标的资源行**
+- 数据来自 Modrinth（官方 API 走 `mod.mcimirror.top` 镜像，图标仍用 CDN）
+- 进详情页看项目页地址、每个版本的文件名与直链，可一键下载到对应版本目录
+- 图标本地缓存（`%APPDATA%\MCLite\cache\icons`）
+
+### 功能投票
+- 13 项**真实存在的功能**（版本管理、加载器、启动、内存分配、整合包、模组、光影、
+  数据包、资源包、一键联机、账号切换、中英切换、下载详情页），一功能一票，按票数排序
+
+### 联机
+- 游戏内「对局域网开放」后从 `logs/latest.log` 自动识别端口
+- 一键拉起开源隧道 [bore](https://github.com/ekzhang/bore) 的免费公共服务（`bore.pub`，无需注册付费）
+
+### 账号
+- 离线登录 / 外置登录（authlib-injector）/ 微软正版（设备码流程，需自备 Azure 公开客户端 Client ID）
 
 ### 基岩版
-- 自动检测本机已安装的 Minecraft（Windows 版），正式版 / 预览版可分别选择启动
-- 服务端（BDS）多版本：官方正式版/预览版列表 + 按版本号下载历史版本
-- 已下载服务端可单独启动（独立控制台，首次需在窗口内同意 EULA）或删除
+- 检测本机 Minecraft 客户端，正式版 / 预览版分别启动
+- 服务端（BDS）：官方正式版 / 预览版列表，按版本号取历史版本
 
-### 内容下载
-- 模组 / 光影 / 资源包，数据来自 [Modrinth](https://modrinth.com)
-- **联网即预取**：启动器一拿到版本清单，后台就抓取热门模组 / 光影 / 资源包列表，
-  打开「模组下载」页直接看到内容，不用先等搜索
-- **点击条目自动解析下载页**：双击任意条目（或点「项目页 / 直链」）即弹出详情窗，
-  显示该项目的真实项目页网址、每个版本的文件名与**直链**，可一键复制直链、
-  复制项目页、或直接按直链下载
-- 按游戏版本 + 加载器筛选，自动补齐 required 前置（如 Fabric API）
-- 光影前置一键装：Fabric→Iris+Sodium，Forge→Oculus+Embeddium，NeoForge→Iris
-- 自动放入 `mods` / `shaderpacks` / `resourcepacks`
+## Android 端 1.2.0
 
-### 联机（Java 版）
-- 在游戏里「对局域网开放」后从 `logs/latest.log` 自动识别端口
-- 内网直连：显示并复制 `内网IP:端口`
-- 公网联机：一键拉起开源隧道 [bore](https://github.com/ekzhang/bore) 的免费公共服务
-  （`bore.pub`，**无需注册、无需付费**），把 `bore.pub:端口` 发给朋友即可
-- 退出启动器自动关闭隧道进程
+`android/` 是 Kotlin + Jetpack Compose 的配套端，定位是**管理 + 一键拉起**：
 
-## 截图（安卓端，Android 11 官方模拟器实测）
+- **Java 版运行环境**：自动识别 PojavLauncher / PojavLauncher 中文版 / Amethyst，
+  一键拉起并可携带版本名；未安装时给出免费开源下载入口，装好后回来自动识别
+- 版本清单浏览（900+ 版本）、BDS 服务端版本、Modrinth 热门前置预取、燃烧式筛选
+- 基岩版客户端检测与启动
 
-| 首页 | 内容下载（联网即预取 + 项目页网址） |
-| --- | --- |
-| ![安卓首页](docs/android-home.png) | ![模组预取](docs/android-mods.png) |
-
-## 目录
-
-```
-%APPDATA%\MCLite\
-├─ config.json          # 设置（游戏目录、Java、内存、玩家名、账号）
-├─ game\                # 游戏目录（versions / libraries / assets / mods ...）
-├─ java\                # 自动下载的 JDK
-├─ tools\               # bore.exe、authlib-injector.jar
-├─ cache\               # 安装器 / 下载缓存
-└─ bedrock\
-   ├─ cache\            # 服务端压缩包缓存
-   └─ servers\<版本>\   # 各版本基岩版服务端
-```
+> 说明：安卓上真正运行 Java 版需要 JVM + OpenGL 转译层（内置 ARM JRE、LWJGL 转 GL4ES），
+> 那是 PojavLauncher / Amethyst 级别的工程。本 App 不重造这一层，而是负责版本、资源、
+> 联机管理，并把已装的运行环境一键拉起来 —— 这样手机上也真的能玩 Java 版。
 
 ## 签名与校验
 
-**安卓 APK 用固定 release keystore 自签名**，证书主体 `CN=MCLite, O=MCLite, C=CN`，
-SHA-256 指纹 `c03b83acde011eb8fe85bf77bf6936a4d074b0aaf2d0c9a3c50b918fea55c6eb`。
-同一把 key 一直沿用，所以后续版本可以直接覆盖安装、无需卸载。
-keystore 不进仓库，只存放在 GitHub Actions Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` /
-`KEY_ALIAS` / `KEY_PASSWORD`），构建时临时还原、用完即弃。
+**Windows exe** 使用自签名代码签名证书（`CN=MCLite Self-Signed`，证书 SHA-1
+`A382880EE6D964E45D8410303303C373415060B3`），时间戳走 DigiCert。
+文件属性里能看到签名者并检测篡改，但根证书不在公共信任库，**别人电脑上仍显示"未知发布者"**，
+除非导入随包 `.cer`。
 
-**Windows exe 使用自签名代码签名证书**（`CN=MCLite Self-Signed, O=MCLite, C=CN`，
-证书指纹 SHA-1 `A382880EE6D964E45D8410303303C373415060B3`），有效期 5 年。
-它能让文件属性里显示签名者、并能检测篡改，但因为根证书不被公共信任库收录，
-**别人的电脑上仍会显示"未知发布者"**，除非把随包的 `MCLite-selfsigned.cer` 导入到
-"受信任的根证书颁发机构"。这不是缺陷，而是没有付费商业证书时的客观限制。
+**Android APK** 固定 release keystore 自签名（`CN=MCLite, OU=Launcher, O=MCLite, C=CN`），
+SHA-256 `84b0cc3a2244ea006ad73102d27d1d3c2ab6493f12e44c2c6569b334ec55ffc7`。
+keystore 与私钥**不进仓库**。
 
-如果以后要让普通用户下载后不弹警告，只能走两条路：购买商业 OV/EV 代码签名证书，
-或申请 [SignPath Foundation](https://signpath.org/) 的开源项目赞助签名
-（需要项目审核，通过后可在 GitHub Actions 里自动签名，本项目已满足"公开仓库 + MIT 许可证 +
-公开 CI 构建"的基础条件）。
+下载后请核对 SHA-256（见 Release 里的 `SHA256SUMS.txt`）：
 
-下载后请用 SHA256 核对（以随包附带的 `SHA256SUMS.txt` 为准，本仓库不存放二进制）：
-
-> 本机信任自签名证书（只影响你这台机器，导入后 UAC 不再提示"未知发布者"）：
->
-> 在 Release 里下载 `trust-mclite-cert.bat`，与 `.cer`、`.exe` 放在同一目录，双击即可完成下面两条命令。
->
-> ```powershell
-> certutil -user -addstore -f Root .\MCLite-selfsigned.cer
-> certutil -user -addstore -f TrustedPublisher .\MCLite-selfsigned.cer
-> ```
->
-> 撤销信任：
->
-> ```powershell
-> certutil -user -delstore Root A382880EE6D964E45D8410303303C373415060B3
-> certutil -user -delstore TrustedPublisher A382880EE6D964E45D8410303303C373415060B3
-> ```
+```powershell
+Get-FileHash .\MC-Lite-v1.0.exe -Algorithm SHA256
+Get-FileHash .\MCLite-android-1.2.0.apk -Algorithm SHA256
+```
 
 > [!WARNING]
-> **先校验，再运行。** 下载别人编译的 exe 前，请用 `SHA256SUMS.txt` 里的值核对
-> `Get-FileHash .\MCLite.exe -Algorithm SHA256`。哈希对不上说明文件被改动过（被篡改、
-> 被二次打包、或下载被中间人替换），**不要运行**。本项目的任何官方构建都只从
-> [Releases](../../releases) 和本仓库的 GitHub Actions 产出，不通过网盘、群文件、第三方站点分发。
-
-
-```
-# 2026-11-25 构建（exe 已自签名，版本资源已写入版权信息）
-MCLite.exe         e1fd35698f2446b185dcd8a0fa5dc4bd8c6de01da5a49d444cc93cf3e8ab8900
-MCLite-android.apk 970174778fb35d9968c3bffabf481b30d3cc78f155ce8eeed06fc81c37fee875
-```
-
-## 版权与版本信息
-
-本项目采用 **MIT License**，著作权人为 `lingpanrui`（见 [LICENSE](LICENSE)）。
-`MCLite.exe` 的版本资源（文件属性 → 详细信息）中写入了下列字段，随签名一起受完整性保护：
-
-| 字段 | 值 |
-| --- | --- |
-| CompanyName | MCLite 项目 |
-| FileDescription | MC Lite 启动器 |
-| ProductName / ProductVersion | MC Lite / 1.1.0.0 |
-| LegalCopyright | Copyright © 2026 lingpanrui，MIT License |
-| Comments | Java 版 + 基岩版 · 模组光影 · 免注册联机 · 仓库地址 |
-
-> 说明：`LegalCopyright` 是文件内的纯文本声明，作用是署名与告知；伪造它不需要任何密钥。
-> 真正无法伪造的是**数字签名**——改一个字节签名即失效，所以本项目两个都做了。
-
-从源码构建时用 `--version-file version_info.txt` 写入上述字段：
-
-```powershell
-python -m PyInstaller --noconfirm --clean --onefile --windowed `
-  --name MCLite --version-file version_info.txt main.py
-```
-
-
-校验方法：
-
-```powershell
-Get-FileHash .\MCLite.exe -Algorithm SHA256
-```
+> 哈希对不上说明文件被改动过（篡改、二次打包、下载被替换），**不要运行**。
+> 官方构建只从 [Releases](../../releases) 产出，不通过网盘、群文件、第三方站点分发。
 
 ## 已知限制（诚实版）
 
-- **NeoForge** 官方 maven（`maven.neoforged.net`）在部分国内网络下被污染，启动器内直接装
-  可能卡在依赖下载。仓库提供 Actions 工作流在海外网络完整安装后打包发布
-  （Releases 里的 `neoforge-20.4.237-installed`），解压到 `game` 目录即可使用；
-  本机实测 Forge `1.20.1-forge-47.4.29` 与 NeoForge `neoforge-20.4.237` 均可进入游戏。
-- **基岩版客户端** 由 Microsoft Store 分发，启动器不绕过商店，只检测并启动
-  本机已安装版本；免安装下载针对的是**服务端**（BDS）。
-- **微软正版登录** 需要自备 Azure Client ID（免费注册，但属于额外步骤）；
-  没有的话用离线或外置登录。
-- **bore** 是共享公共隧道，带宽/延迟看线路，适合临时联机；长期开服请用正式端口映射。
-- 光影需要 Iris / OptiFine 这类模组加载，启动器只能帮你把前置装好，不能替代渲染管线。
-- 界面是 tkinter 自绘，**没有** 现代 UI 的动效；追求好看可以看安卓端 / 自行换皮。
+- **v1.0 桌面端还没有"安装新版本"的完整流程**：版本页目前只扫描已装版本并启动，
+  "安装新版本"按钮是占位提示。v1 的安装逻辑（原版 / Fabric / Quilt / Forge / NeoForge 下载）
+  仍在仓库 `mclite/ui.py` 那套旧界面里可用，后续版本会把安装流程搬进新版界面。
+- **NeoForge** 官方 maven 在部分国内网络被污染，可能卡在依赖下载。
+- **基岩版客户端**由 Microsoft Store 分发，启动器不绕过商店，只检测并启动已安装版本；
+  可免安装下载的是**服务端**（BDS）。
+- **微软正版登录** 需自备 Azure Client ID（免费注册但要额外几步）。
+- **安卓端跑 Java 版依赖 PojavLauncher / Amethyst**，本 App 不自带 JVM。
+- **bore** 是共享公共隧道，延迟看线路，适合临时联机。
 
-## 从源码构建
+## 从源码跑
+
+```powershell
+启动.bat
+# 需要 Python 3.10+，仅标准库
+```
+
+打包：
 
 ```powershell
 python -m pip install pyinstaller
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name MCLite --version-file version_info.txt main.py
-# 产物：dist\MCLite.exe
+python -m PyInstaller --noconfirm --clean --onefile --windowed `
+  --name MCLite-v2 --version-file version_info_v2.txt main.py
+# 产物：dist\MCLite-v2.exe
 ```
 
-## 发布流程（维护者）
-
-`发布版本.ps1`（维护者本地脚本，不入公开仓库）把「改版本号 → 打包 → 校验版本资源 → 签名 → 算哈希 → 上传 Release」串成一条链，
-每步都校验结果，任何一步失败立即停止：
+安卓端：
 
 ```powershell
-# 日常发版
-.\发布版本.ps1 -Version 1.2.0
-
-# 只打印将要做什么，不改任何文件
-.\发布版本.ps1 -Version 1.2.0 -DryRun
-
-# exe 已打好/已签好，只重算哈希并替换 Release 资产
-.\发布版本.ps1 -SkipBuild -SkipSign -Tag v1.1.0
-
-# 本地验证，不碰远端
-.\发布版本.ps1 -Version 1.2.0 -SkipUpload
-```
-
-签名用的证书指纹写在脚本参数 `-Thumbprint` 里（默认 `A382880E...60B3`），换机器时先导入
-`.signing\codesign-selfsigned.pfx`，脚本会自动在证书库里找。
-
-
-自检（检查各接口连通性，`--install` 会真实装一个版本）：
-
-```powershell
-python selftest.py
-python selftest.py --install 1.20.1
+cd android
+# 需要 JDK 17 + Android SDK 34 + Gradle 8.7
+gradle assembleRelease
 ```
 
 ## 代码结构
 
 ```
-main.py              入口（DPI 适配、全局异常兜底）
-mclite/ui.py         tkinter 界面（深色主题、页面路由、滚动容器、日志控制台）
-mclite/mojang.py     版本清单、原版/Fabric/Quilt 安装、inheritsFrom 合并、启动命令
-mclite/forge.py      Forge / NeoForge 安装器调度（官方 + BMCLAPI 兜底）
+main.py              入口（DPI 适配、全局异常兜底，指向 ui_v2）
+mclite/ui_v2.py      正式版界面（深色自绘组件、页面路由、下载页、投票页、设置）
+mclite/i18n.py       中英文案表与语言切换
+mclite/poll.py       功能投票的 13 项功能定义与票数
+mclite/imgcache.py   模组图标本地缓存
+mclite/modrinth.py   Modrinth 搜索/版本/依赖（官方 + 镜像）
+mclite/mojang.py     版本清单、原版安装、inheritsFrom 合并、启动命令
+mclite/forge.py      Forge / NeoForge 安装器调度
 mclite/auth.py       authlib-injector 外置登录、微软设备码登录
 mclite/java.py       Java 检测与 Temurin 自动下载
-mclite/modrinth.py   Modrinth 搜索/版本/依赖下载
 mclite/bedrock.py    基岩客户端检测、BDS 多版本下载与启动
 mclite/tunnel.py     局域网端口识别 + bore 隧道
 mclite/util.py       配置、HTTP、校验、解压
+mclite/ui.py         v1 界面（保留：完整安装流程在这里）
+android/             Kotlin + Jetpack Compose 安卓端
 ```
+
+## 版权
+
+**MIT License**，著作权人 `lingpanrui`（见 [LICENSE](LICENSE)）。
+
+`MCLite-v2.exe` 版本资源（文件属性 → 详细信息）：
+
+| 字段 | 值 |
+| --- | --- |
+| CompanyName | MCLite 项目 |
+| FileDescription | MC Lite 启动器 正式版 v1.0 |
+| ProductName / ProductVersion | MC Lite / 1.0.0.0 |
+| LegalCopyright | Copyright © 2026 lingpanrui，MIT License |
 
 ## 参与开发
 
-见 [CONTRIBUTING.md](CONTRIBUTING.md)。Issue / PR 都欢迎，尤其是：
-基岩版启动兼容性、更多外置登录站点、UI 细节。
-
-## 安卓版
-
-`android/` 目录是一个同样开源的安卓端（Kotlin + Jetpack Compose），
-定位与桌面版不同：安卓上要真的跑 Java 版需要 ARM JVM 与 GL 转译（那是
-PojavLauncher 级别的工程），所以安卓端做的是**配套管理端**——版本/模组/光影浏览、
-服务端状态、联机地址管理，并可拉起已安装的 PojavLauncher 或基岩版。
-安卓端同样**联网即预取热门模组**，每条结果直接显示真实项目页网址，
-点「解析下载直链」可拿到每个版本文件的真实 CDN 链接。
-已在 Android 11（x86_64 官方模拟器，Google APIs）实测启动与预取正常。
-详见 [android/README.md](android/README.md)。
-
-## License
-
-[MIT](LICENSE)
+见 [CONTRIBUTING.md](CONTRIBUTING.md)。Issue / PR 都欢迎。

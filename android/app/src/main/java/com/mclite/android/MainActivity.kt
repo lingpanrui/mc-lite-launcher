@@ -143,22 +143,46 @@ private fun launchBedrock(ctx: Context): Boolean {
     }
 }
 
-private fun pojavInstalled(ctx: Context): Boolean =
-    try {
-        ctx.packageManager.getLaunchIntentForPackage("net.kdt.pojavlaunch") != null
-    } catch (_: Exception) {
-        false
-    }
+// Java 版在安卓上要真跑起来，需要一个自带 JVM 与图形转译层的运行环境。
+// 下面几个都是免费开源、不用登录也不用实名的，装上任意一个就能跑。
+private val RunnerPackages = listOf(
+    "net.kdt.pojavlaunch" to "PojavLauncher",
+    "com.movtery.pojavzh" to "PojavLauncher 中文版",
+    "com.angelaura.amethyst" to "Amethyst",
+    "io.github.angelauramc.amethyst" to "Amethyst",
+)
 
-private fun launchPojav(ctx: Context): Boolean {
+private fun findRunner(ctx: Context): Pair<String, String>? {
+    for ((pkg, label) in RunnerPackages) {
+        try {
+            if (ctx.packageManager.getLaunchIntentForPackage(pkg) != null) return pkg to label
+        } catch (_: Exception) {
+        }
+    }
+    return null
+}
+
+private fun runnerInstalled(ctx: Context): Boolean = findRunner(ctx) != null
+
+/** 拉起运行环境，尽量把版本名带过去；对方不认识这个参数时会退化成打开它的主界面。 */
+private fun launchRunner(ctx: Context, version: String? = null): Boolean {
+    val hit = findRunner(ctx) ?: return false
     return try {
-        val intent = ctx.packageManager.getLaunchIntentForPackage("net.kdt.pojavlaunch") ?: return false
+        val intent = ctx.packageManager.getLaunchIntentForPackage(hit.first) ?: return false
+        if (!version.isNullOrBlank()) {
+            intent.putExtra("version", version)
+            intent.putExtra("mcversion", version)
+            intent.putExtra("versionName", version)
+        }
         ctx.startActivity(intent)
         true
     } catch (_: Exception) {
         false
     }
 }
+
+private const val POJAV_RELEASES = "https://github.com/PojavLauncherTeam/PojavLauncher/releases"
+private const val AMETHYST_RELEASES = "https://github.com/AngelAuraMC/Amethyst-Android/releases"
 
 // --------------------------------------------------------------------------- //
 // 通用小组件
@@ -268,9 +292,11 @@ private fun HomeScreen(onNavigate: (Int) -> Unit) {
     var manifest by remember { mutableStateOf<Api.Manifest?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var bedrock by remember { mutableStateOf(false) }
+    var runner by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     LaunchedEffect(Unit) {
         bedrock = bedrockInstalled(ctx)
+        runner = findRunner(ctx)
         withContext(Dispatchers.IO) {
             runCatching { Api.mojangManifest() }
                 .onSuccess { manifest = it }
@@ -301,6 +327,45 @@ private fun HomeScreen(onNavigate: (Int) -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { onNavigate(1) }) { Text("版本列表") }
                 TextButton(onClick = { onNavigate(3) }) { Text("找模组 / 光影") }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        SectionCard(
+            title = "Java 版运行环境",
+            subtitle = if (runner != null) {
+                "已就绪：${runner!!.second} 负责 JVM 与图形转译"
+            } else {
+                "未检测到运行环境 · 装一个就能在手机上真正跑 Java 版"
+            },
+        ) {
+            Column {
+                if (runner != null) {
+                    Text(
+                        "版本、模组光影、联机由 MC Lite 管；点启动时会把版本名交给 ${runner!!.second}，由它把游戏跑起来。",
+                        color = SubColor, fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            if (!launchRunner(ctx)) runner = findRunner(ctx)
+                        }) { Text("打开 ${runner!!.second}") }
+                        TextButton(onClick = { onNavigate(1) }) { Text("选版本启动") }
+                    }
+                } else {
+                    Text(
+                        "安卓本身没有 JVM 和 OpenGL 转译层，光有启动器跑不起来。PojavLauncher / Amethyst 是免费开源的运行环境，不用登录、不用实名、也不用花钱，装上之后这里会自动识别。",
+                        color = SubColor, fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { openUrl(ctx, POJAV_RELEASES) }) { Text("下载 PojavLauncher") }
+                        TextButton(onClick = { openUrl(ctx, AMETHYST_RELEASES) }) { Text("Amethyst") }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(onClick = { runner = findRunner(ctx) }) { Text("装好了，重新检测") }
+                }
             }
         }
 
@@ -339,8 +404,8 @@ private fun HomeScreen(onNavigate: (Int) -> Unit) {
         ) {
             Column {
                 Text(
-                    if (pojavInstalled(ctx)) "已检测到 PojavLauncher，可作为 Java 版运行环境。"
-                    else "提示：安卓上要真正运行 Java 版需要 JVM + GL 转译（例如 PojavLauncher），本应用负责版本/资源浏览与联机管理。",
+                    if (runner != null) "运行环境已就绪：${runner!!.second} 负责把 Java 版真正跑起来，这里的版本与资源直接对着它用。"
+                    else "本应用负责版本、模组光影与联机管理；安卓上跑 Java 版还需要一个免费开源的运行环境（PojavLauncher / Amethyst），装好后这里会自动识别。",
                     color = SubColor, fontSize = 12.sp
                 )
                 Spacer(Modifier.height(8.dp))
@@ -348,8 +413,10 @@ private fun HomeScreen(onNavigate: (Int) -> Unit) {
                     TextButton(onClick = { openUrl(ctx, "https://github.com/lingpanrui/mc-lite-launcher") }) {
                         Text("GitHub 仓库")
                     }
-                    if (pojavInstalled(ctx)) {
-                        TextButton(onClick = { launchPojav(ctx) }) { Text("打开 PojavLauncher") }
+                    if (runner != null) {
+                        TextButton(onClick = { launchRunner(ctx) }) { Text("打开 ${runner!!.second}") }
+                    } else {
+                        TextButton(onClick = { openUrl(ctx, POJAV_RELEASES) }) { Text("去装运行环境") }
                     }
                 }
             }
@@ -371,8 +438,10 @@ private fun JavaScreen() {
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<Api.McVersion?>(null) }
+    var runner by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     LaunchedEffect(Unit) {
+        runner = findRunner(ctx)
         withContext(Dispatchers.IO) {
             runCatching { Api.mojangManifest().versions }
                 .onSuccess { versions = it }
@@ -449,15 +518,28 @@ private fun JavaScreen() {
                     Text("类型：${pick.type}", color = SubColor, fontSize = 13.sp)
                     Text("发布时间：${pick.released}", color = SubColor, fontSize = 13.sp)
                     Spacer(Modifier.height(8.dp))
-                    Text("在桌面版 MC Lite 里可以直接一键安装这个版本；手机上可复制 JSON 地址交给 PojavLauncher 或其他工具。",
-                        color = SubColor, fontSize = 12.sp)
+                    Text(
+                        if (runner != null) "点“用它启动”会把 ${pick.id} 交给 ${runner!!.second} 直接跑起来；也可以在它的版本列表里手动选。"
+                        else "手机上要跑这个版本，得先装一个免费开源的运行环境（PojavLauncher / Amethyst），装好后回到这里就能一键启动。",
+                        color = SubColor, fontSize = 12.sp
+                    )
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    copyText(ctx, pick.jsonUrl, "版本 JSON")
-                    selected = null
-                }) { Text("复制地址") }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (runner != null) {
+                        TextButton(onClick = {
+                            if (!launchRunner(ctx, pick.id)) {
+                                copyText(ctx, pick.id, "版本名")
+                            }
+                            selected = null
+                        }) { Text("用它启动") }
+                    }
+                    TextButton(onClick = {
+                        copyText(ctx, pick.jsonUrl, "版本 JSON")
+                        selected = null
+                    }) { Text("复制地址") }
+                }
             },
             dismissButton = {
                 TextButton(onClick = { openUrl(ctx, pick.jsonUrl); selected = null }) { Text("浏览器打开") }

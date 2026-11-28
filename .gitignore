@@ -35,3 +35,12 @@ android/keystore.jks
 # PyInstaller 自动生成
 MCLite.spec
 
+
+# 安卓签名私钥（绝不提交）
+android/*.jks
+android/*.keystore
+!android/*.keystore.example
+
+# 发布资产与临时日志
+_release/
+android/build-log.txt

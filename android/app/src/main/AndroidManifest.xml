@@ -7,6 +7,9 @@
     <queries>
         <package android:name="com.mojang.minecraftpe" />
         <package android:name="net.kdt.pojavlaunch" />
+        <package android:name="com.movtery.pojavzh" />
+        <package android:name="com.angelaura.amethyst" />
+        <package android:name="io.github.angelauramc.amethyst" />
     </queries>
 
     <application

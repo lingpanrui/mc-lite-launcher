@@ -7,6 +7,9 @@ import urllib.parse
 from . import util
 
 API = "https://api.modrinth.com/v2"
+# 国内镜像（MCIM）：接口结构一致，只需换域名；官方不可达时自动回退
+MIRROR_API = "https://mod.mcimirror.top/modrinth/v2"
+API_BASES = (MIRROR_API, API)
 
 PROJECT_TYPES = {
     "mod": "模组",
@@ -35,10 +38,17 @@ LOADERS = ["fabric", "quilt", "forge", "neoforge"]
 
 
 def _get(path, params=None):
-    url = API + path
+    """依次尝试镜像与官方域名，首个成功者返回"""
+    qs = ""
     if params:
-        url += "?" + urllib.parse.urlencode(params, doseq=True)
-    return util.http_json(url)
+        qs = "?" + urllib.parse.urlencode(params, doseq=True)
+    last = None
+    for base in API_BASES:
+        try:
+            return util.http_json(base + path + qs, timeout=18)
+        except Exception as e:  # 官方被墙时几乎必然超时，直接换镜像
+            last = e
+    raise last
 
 
 def search(query="", project_type=None, loader=None, game_version=None, limit=20, offset=0, sort="relevance"):
@@ -143,3 +153,4 @@ def download_pack(project_id, game_dir, game_version=None, loader=None, status=N
     pack_dir = os.path.join(game_dir, "modpacks")
     dest, _ = _download_file_entry(entry, pack_dir, status)
     return dest
+

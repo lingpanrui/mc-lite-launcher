@@ -11,8 +11,8 @@ android {
         applicationId = "com.mclite.android"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
     }
 
     // 固定 release 签名：CI 里由 secrets 解码 keystore 并注入这几个环境变量，

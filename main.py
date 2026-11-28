@@ -24,7 +24,7 @@ def enable_dpi_awareness():
 
 def main():
     enable_dpi_awareness()
-    from mclite.ui import App
+    from mclite.ui_v2 import App
     App().mainloop()
 
 
@@ -37,3 +37,4 @@ if __name__ == "__main__":
             input("启动器异常退出，按回车关闭…")
         except Exception:
             pass
+
